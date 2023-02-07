@@ -79,7 +79,7 @@ contains
          call param_read('Partition',partition,short='p')
          
          ! Create partitioned grid
-         cfg=config(grp=group,decomp=partition,grid=grid,strat=p3dfft_decomp)
+         cfg=config(grp=group,decomp=partition,grid=grid)
          
       end block create_cfg
       

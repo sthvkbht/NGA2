@@ -2,16 +2,15 @@
 NGA_HOME ?= ../..
 
 # Compilation parameters
-PRECISION   = DOUBLE
-USE_MPI     = TRUE
-USE_FFTW    = TRUE
-USE_P3DFFT  = TRUE
-USE_HYPRE   = TRUE
-USE_LAPACK  = TRUE
-PROFILE     = FALSE
-DEBUG       = FALSE
-COMP        = gnu
-EXEBASE     = nga
+PRECISION = DOUBLE
+USE_MPI   = TRUE
+USE_FFTW  = TRUE
+USE_HYPRE = TRUE
+USE_LAPACK= TRUE
+PROFILE   = FALSE
+DEBUG     = FALSE
+COMP      = gnu
+EXEBASE   = nga
 
 # Directories that contain user-defined code
 Udirs   := src
@@ -27,7 +26,6 @@ VPATH_LOCATIONS   += $(Ulocs)
 LAPACK_DIR=/opt/homebrew/Cellar/lapack/3.10.1_1
 HYPRE_DIR=/Users/jcaps/Research/Codes/Builds/hypre
 FFTW_DIR=/opt/homebrew/Cellar/fftw/3.3.10_1
-P3DFFT_DIR=/Users/jcaps/Research/Codes/Builds/p3dfft
 
 # NGA compilation definitions
 include $(NGA_HOME)/tools/GNUMake/Make.defs
