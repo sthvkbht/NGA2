@@ -46,6 +46,7 @@ module simulation
   real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi,rho0,dRHOdt
   real(WP), dimension(:,:,:), allocatable :: srcUlp,srcVlp,srcWlp
   real(WP), dimension(:,:,:), allocatable :: G
+  real(WP), dimension(:,:,:,:), allocatable :: Gnorm
   real(WP) :: visc,rho,mfr,mfr_target,bforce
 
   !> Wallclock time for monitoring
@@ -245,6 +246,7 @@ contains
       allocate(Wi      (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(rho0    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(G       (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+      allocate(Gnorm   (1:3,cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
     end block allocate_work_arrays
 
 
@@ -447,17 +449,25 @@ contains
     end block initialize_velocity
 
 
-    ! Initialize levelset
+    ! Initialize levelset and its normal
     initialize_G: block
       integer :: i,j,k
+      real(WP) :: buf
+      real(WP), dimension(3) :: n12
       do k=fs%cfg%kmin_,fs%cfg%kmax_
          do j=fs%cfg%jmin_,fs%cfg%jmax_
             do i=fs%cfg%imin_,fs%cfg%imax_
                G(i,j,k)=0.5_WP*D-sqrt(fs%cfg%ym(j)**2+fs%cfg%zm(k)**2)
+               n12(1)=0.0_WP
+               n12(2)=-fs%cfg%ym(j)
+               n12(3)=-fs%cfg%zm(k)
+               buf = sqrt(sum(n12*n12))+epsilon(1.0_WP)
+               Gnorm(:,i,j,k)=n12/buf
             end do
          end do
       end do
       call fs%cfg%sync(G)
+      call fs%cfg%sync(Gnorm)
     end block initialize_G
 
     ! Add Ensight output
@@ -588,7 +598,7 @@ contains
        resU=resU+bforce
 
        ! Collide and advance particles
-       call lp%collide(dt=time%dtmid,pipe_D=D,pipe_pos=(/0.0_WP,0.0_WP/),pipe_dir='x')
+       call lp%collide(dt=time%dtmid,Gib=G,Nxib=Gnorm(1,:,:,:),Nyib=Gnorm(2,:,:,:),Nzib=Gnorm(3,:,:,:))
        call lp%advance(dt=time%dtmid,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
             srcU=srcUlp,srcV=srcVlp,srcW=srcWlp)
 
@@ -635,26 +645,26 @@ contains
             call fs%cfg%sync(resW)
           end block add_lpt_src
 
-!!$          ! Apply direct forcing to enforce BC at the pipe walls
-!!$          ibm_correction: block
-!!$            integer :: i,j,k
-!!$            real(WP) :: VFx,VFy,VFz,RHOx,RHOy,RHOz
-!!$            do k=fs%cfg%kmin_,fs%cfg%kmax_
-!!$               do j=fs%cfg%jmin_,fs%cfg%jmax_
-!!$                  do i=fs%cfg%imin_,fs%cfg%imax_
-!!$                     VFx=get_VF(i,j,k,'U')
-!!$                     VFy=get_VF(i,j,k,'V')
-!!$                     VFz=get_VF(i,j,k,'W')
-!!$                     RHOx=sum(fs%itpr_x(:,i,j,k)*fs%rho(i-1:i,j,k))
-!!$                     RHOy=sum(fs%itpr_y(:,i,j,k)*fs%rho(i,j-1:j,k))
-!!$                     RHOz=sum(fs%itpr_z(:,i,j,k)*fs%rho(i,j,k-1:k))
-!!$                     resU(i,j,k)=resU(i,j,k)-(1.0_WP-VFx)*RHOx*fs%U(i,j,k)
-!!$                     resV(i,j,k)=resV(i,j,k)-(1.0_WP-VFy)*RHOy*fs%V(i,j,k)
-!!$                     resW(i,j,k)=resW(i,j,k)-(1.0_WP-VFz)*RHOz*fs%W(i,j,k)
-!!$                  end do
-!!$               end do
-!!$            end do
-!!$          end block ibm_correction
+          ! Apply direct forcing to enforce BC at the pipe walls
+          ibm_correction: block
+            integer :: i,j,k
+            real(WP) :: VFx,VFy,VFz,RHOx,RHOy,RHOz
+            do k=fs%cfg%kmin_,fs%cfg%kmax_
+               do j=fs%cfg%jmin_,fs%cfg%jmax_
+                  do i=fs%cfg%imin_,fs%cfg%imax_
+                     VFx=get_VF(i,j,k,'U')
+                     VFy=get_VF(i,j,k,'V')
+                     VFz=get_VF(i,j,k,'W')
+                     RHOx=sum(fs%itpr_x(:,i,j,k)*fs%rho(i-1:i,j,k))
+                     RHOy=sum(fs%itpr_y(:,i,j,k)*fs%rho(i,j-1:j,k))
+                     RHOz=sum(fs%itpr_z(:,i,j,k)*fs%rho(i,j,k-1:k))
+                     resU(i,j,k)=resU(i,j,k)-(1.0_WP-VFx)*RHOx*fs%U(i,j,k)
+                     resV(i,j,k)=resV(i,j,k)-(1.0_WP-VFy)*RHOy*fs%V(i,j,k)
+                     resW(i,j,k)=resW(i,j,k)-(1.0_WP-VFz)*RHOz*fs%W(i,j,k)
+                  end do
+               end do
+            end do
+          end block ibm_correction
 
           ! Add body forcing
           bodyforcing: block
@@ -671,26 +681,26 @@ contains
           fs%V=2.0_WP*fs%V-fs%Vold+resV
           fs%W=2.0_WP*fs%W-fs%Wold+resW
 
-          ! Apply direct forcing to enforce BC at the pipe walls
-          ibm_correction: block
-            integer :: i,j,k
-            real(WP) :: VFx,VFy,VFz
-            do k=fs%cfg%kmin_,fs%cfg%kmax_
-               do j=fs%cfg%jmin_,fs%cfg%jmax_
-                  do i=fs%cfg%imin_,fs%cfg%imax_
-                     VFx=get_VF(i,j,k,'U')
-                     VFy=get_VF(i,j,k,'V')
-                     VFz=get_VF(i,j,k,'W')
-                     fs%U(i,j,k)=fs%U(i,j,k)*VFx
-                     fs%V(i,j,k)=fs%V(i,j,k)*VFy
-                     fs%W(i,j,k)=fs%W(i,j,k)*VFz
-                  end do
-               end do
-            end do
-            call fs%cfg%sync(fs%U)
-            call fs%cfg%sync(fs%V)
-            call fs%cfg%sync(fs%W)
-          end block ibm_correction
+!!$          ! Apply direct forcing to enforce BC at the pipe walls
+!!$          ibm_correction: block
+!!$            integer :: i,j,k
+!!$            real(WP) :: VFx,VFy,VFz
+!!$            do k=fs%cfg%kmin_,fs%cfg%kmax_
+!!$               do j=fs%cfg%jmin_,fs%cfg%jmax_
+!!$                  do i=fs%cfg%imin_,fs%cfg%imax_
+!!$                     VFx=get_VF(i,j,k,'U')
+!!$                     VFy=get_VF(i,j,k,'V')
+!!$                     VFz=get_VF(i,j,k,'W')
+!!$                     fs%U(i,j,k)=fs%U(i,j,k)*VFx
+!!$                     fs%V(i,j,k)=fs%V(i,j,k)*VFy
+!!$                     fs%W(i,j,k)=fs%W(i,j,k)*VFz
+!!$                  end do
+!!$               end do
+!!$            end do
+!!$            call fs%cfg%sync(fs%U)
+!!$            call fs%cfg%sync(fs%V)
+!!$            call fs%cfg%sync(fs%W)
+!!$          end block ibm_correction
 
           ! Apply other boundary conditions and update momentum
           call fs%apply_bcond(time%tmid,time%dtmid)
@@ -806,7 +816,7 @@ contains
     ! timetracker
 
     ! Deallocate work arrays
-    deallocate(resU,resV,resW,srcUlp,srcVlp,srcWlp,Ui,Vi,Wi,dRHOdt,G)
+    deallocate(resU,resV,resW,srcUlp,srcVlp,srcWlp,Ui,Vi,Wi,dRHOdt,G,Gnorm)
 
   end subroutine simulation_final
 

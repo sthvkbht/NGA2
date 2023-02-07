@@ -352,21 +352,23 @@ contains
 
   !> Resolve collisional interaction between particles
   !> Requires tau_col, e_n, e_w and mu_f to be set beforehand
-  subroutine collide(this,dt,pipe_D,pipe_pos,pipe_dir)
+  subroutine collide(this,dt,Gib,Nxib,Nyib,Nzib)
     implicit none
     class(lpt), intent(inout) :: this
     real(WP), intent(inout) :: dt  !< Timestep size over which to advance
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: Gib  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: Nxib !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: Nyib !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: Nzib !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     integer, dimension(:,:,:), allocatable :: npic      !< Number of particle in cell
     integer, dimension(:,:,:,:), allocatable :: ipic    !< Index of particle in cell
-    real(WP), intent(in), optional :: pipe_D,pipe_pos(2)
-    character(len=*), intent(in), optional :: pipe_dir
 
-    ! Check if all pipe properties are provided
-    check_pipe: block
+    ! Check if all IB parameters are present
+    check_G: block
       use messager, only: die
-      if (present(pipe_D).and.(.not.present(pipe_pos).or..not.present(pipe_dir))) &
-           call die('[lpt collide] Missing pipe parameters')
-    end block check_pipe
+      if (present(Gib).and.(.not.present(Nxib).or..not.present(Nyib).or..not.present(Nzib))) &
+           call die('[lpt collide] IB collisions need Gib, Nxib, Nyib, AND Nzib')
+    end block check_G
 
     ! Start by zeroing out the collision force
     zero_force: block
@@ -489,26 +491,13 @@ contains
             ! Calculate collision torque
             this%p(i1)%Tcol=this%p(i1)%Tcol+cross_product(0.5_WP*d1*n12,f_t)
          end if
-         
-         ! Collide with pipe walls
-         if (present(pipe_D)) then
-            select case(trim(pipe_dir))
-            case('x')
-               d12=0.5_WP*pipe_D-sqrt((r1(2)-pipe_pos(1))**2+(r1(3)-pipe_pos(2))**2)
-               n12(1) = 0.0_WP
-               n12(2) = pipe_pos(1) - r1(2)
-               n12(3) = pipe_pos(2) - r1(3)
-            case('y')
-               d12=0.5_WP*pipe_D-sqrt((r1(1)-pipe_pos(1))**2+(r1(3)-pipe_pos(2))**2)
-               n12(1) = pipe_pos(1) - r1(1)
-               n12(2) = 0.0_WP 
-               n12(3) = pipe_pos(2) - r1(3)
-            case('z')
-               d12=0.5_WP*pipe_D-sqrt((r1(1)-pipe_pos(1))**2+(r1(2)-pipe_pos(2))**2)
-               n12(1) = pipe_pos(1) - r1(1)
-               n12(2) = pipe_pos(2) - r1(2)
-               n12(3) = 0.0_WP
-            end select
+
+         ! Collide with IB
+         if (present(Gib)) then
+            d12=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Gib,bc='n')
+            n12(1)=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Nxib,bc='n')
+            n12(2)=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Nyib,bc='n')
+            n12(3)=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Nzib,bc='n')
             buf = sqrt(sum(n12*n12))+epsilon(1.0_WP)
             n12 = -n12/buf
             rnv=dot_product(v1,n12)
