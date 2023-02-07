@@ -89,7 +89,7 @@ contains
       do k=cfg%kmin_,cfg%kmax_
          do j=cfg%jmin_,cfg%jmax_
             do i=cfg%imin_,cfg%imax_
-               cfg%VF(i,j,k)=get_VF(i,j,k,'SC')+epsilon(1.0_WP)
+               cfg%VF(i,j,k)=max(get_VF(i,j,k,'SC'),epsilon(1.0_WP))
             end do
          end do
       end do
