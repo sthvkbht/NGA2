@@ -767,6 +767,9 @@ contains
       ! Point to pressure solver linsol object
       this%psolv=>pressure_solver
       
+      ! Point to pressure solver linsol object
+      this%psolv=>pressure_solver
+
       ! Set 7-pt stencil map for the pressure solver
       this%psolv%stc(1,:)=[ 0, 0, 0]
       this%psolv%stc(2,:)=[+1, 0, 0]
@@ -802,13 +805,13 @@ contains
       ! Initialize the pressure Poisson solver
       call this%psolv%init()
       call this%psolv%setup()
-
+      
       ! Prepare implicit solver if it had been provided
       if (present(implicit_solver)) then
-
+         
          ! Point to implicit solver linsol object
          this%implicit=>implicit_solver
-
+         
          ! Set 7-pt stencil map for the velocity solver
          this%implicit%stc(1,:)=[ 0, 0, 0]
          this%implicit%stc(2,:)=[+1, 0, 0]
@@ -817,13 +820,13 @@ contains
          this%implicit%stc(5,:)=[ 0,-1, 0]
          this%implicit%stc(6,:)=[ 0, 0,+1]
          this%implicit%stc(7,:)=[ 0, 0,-1]
-
+         
          ! Set the diagonal to 1 to make sure all cells participate in solver
          this%implicit%opr(1,:,:,:)=1.0_WP
-
+         
          ! Initialize the implicit velocity solver
          call this%implicit%init()
-
+         
       end if
       
    end subroutine setup
@@ -1922,23 +1925,11 @@ contains
       implicit none
       class(lowmach), intent(in) :: this
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: pressure !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-      real(WP) :: vol_tot,pressure_tot,my_vol_tot,my_pressure_tot
-      integer :: i,j,k,ierr
+      real(WP) :: pressure_tot
+      integer :: i,j,k
       
-      ! Loop over domain and integrate volume and pressure
-      my_vol_tot=0.0_WP
-      my_pressure_tot=0.0_WP
-      do k=this%cfg%kmin_,this%cfg%kmax_
-         do j=this%cfg%jmin_,this%cfg%jmax_
-            do i=this%cfg%imin_,this%cfg%imax_
-               my_vol_tot     =my_vol_tot     +this%cfg%vol(i,j,k)*this%cfg%VF(i,j,k)
-               my_pressure_tot=my_pressure_tot+this%cfg%vol(i,j,k)*this%cfg%VF(i,j,k)*pressure(i,j,k)
-            end do
-         end do
-      end do
-      call MPI_ALLREDUCE(my_vol_tot     ,vol_tot     ,1,MPI_REAL_WP,MPI_SUM,this%cfg%comm,ierr)
-      call MPI_ALLREDUCE(my_pressure_tot,pressure_tot,1,MPI_REAL_WP,MPI_SUM,this%cfg%comm,ierr)
-      pressure_tot=pressure_tot/vol_tot
+      ! Compute volume-averaged pressure
+      call this%cfg%integrate(A=pressure,integral=pressure_tot); pressure_tot=pressure_tot/this%cfg%fluid_vol
       
       ! Shift the pressure
       do k=this%cfg%kmin_,this%cfg%kmax_

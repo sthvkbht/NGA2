@@ -7,6 +7,7 @@ USE_MPI   = TRUE
 USE_HYPRE = TRUE
 USE_LAPACK= TRUE
 USE_FFTW  = TRUE
+USE_P3DFFT= TRUE
 USE_IRL   = FALSE
 PROFILE   = FALSE
 DEBUG     = FALSE
@@ -23,10 +24,7 @@ include $(Upack)
 INCLUDE_LOCATIONS += $(Ulocs)
 VPATH_LOCATIONS   += $(Ulocs)
 
-# Define external libraries - this can also be in .profile
-LAPACK_DIR=/opt/homebrew/Cellar/lapack/3.10.1_1
-HYPRE_DIR = /Users/jcaps/Research/Codes/Builds/hypre/
-FFTW_DIR=/opt/homebrew/Cellar/fftw/3.3.10_1
+# External libraries are defined in .profile/.bashrc/.zshrc, but could be defined here as well
 
 # NGA compilation definitions
 include $(NGA_HOME)/tools/GNUMake/Make.defs

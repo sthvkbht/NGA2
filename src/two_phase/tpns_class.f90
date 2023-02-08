@@ -7,7 +7,7 @@ module tpns_class
    use precision,      only: WP
    use string,         only: str_medium
    use config_class,   only: config
-   use ils_class,      only: ils
+   use linsol_class,   only: linsol
    use iterator_class, only: iterator
    implicit none
    private
@@ -107,10 +107,10 @@ module tpns_class
       real(WP), dimension(:,:,:), allocatable :: FWX,FWY,FWZ !< W-momentum fluxes
       
       ! Pressure solver
-      type(ils) :: psolv                                  !< Iterative linear solver object for the pressure Poisson equation
+      class(linsol), pointer :: psolv                     !< Iterative linear solver object for the pressure Poisson equation
       
       ! Implicit velocity solver
-      type(ils) :: implicit                               !< Iterative linear solver object for an implicit prediction of the NS residual
+      class(linsol), pointer :: implicit                  !< Iterative linear solver object for an implicit prediction of the NS residual
       
       ! Metrics
       real(WP) :: RHOeps                                  !< Parameter for when to switch between centered and modified interpolation scheme
@@ -245,12 +245,6 @@ contains
       allocate(self%FWY(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%FWY=0.0_WP
       allocate(self%FWZ(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%FWZ=0.0_WP
       
-      ! Create pressure solver object
-      self%psolv   =ils(cfg=self%cfg,name='Pressure')
-      
-      ! Create implicit velocity solver object
-      self%implicit=ils(cfg=self%cfg,name='Momentum')
-      
       ! Prepare default metrics
       call self%init_metrics()
       
@@ -354,7 +348,7 @@ contains
       do k=this%cfg%kmino_  ,this%cfg%kmaxo_
          do j=this%cfg%jmino_  ,this%cfg%jmaxo_
             do i=this%cfg%imino_+1,this%cfg%imaxo_
-               this%itpr_x(:,i,j,k)=this%cfg%dxmi(i)*[this%cfg%xm(i)-this%cfg%x(i),this%cfg%x(i)-this%cfg%xm(i-1)] !< Linear interpolation in x from [xm,ym,zm] to [x,ym,zm]
+               this%itpr_x(:,i,j,k)=this%cfg%dxmi(i)*[this%cfg%xm(i)-this%cfg%x(i),this%cfg%x(i)-this%cfg%xm(i-1)] !< Linear interpolation in x from [xm,ym,zm] to [x,ym,zm]
             end do
          end do
       end do
@@ -839,14 +833,17 @@ contains
    
    
    !> Finish setting up the flow solver now that bconds have been defined
-   subroutine setup(this,pressure_ils,implicit_ils)
+   subroutine setup(this,pressure_solver,implicit_solver)
       implicit none
       class(tpns), intent(inout) :: this
-      integer, intent(in) :: pressure_ils
-      integer, intent(in) :: implicit_ils
+      class(linsol), target, intent(in) :: pressure_solver                      !< A pressure solver is required
+      class(linsol), target, intent(in), optional :: implicit_solver            !< An implicit solver can be provided
       
       ! Adjust metrics based on bcflag array
       call this%adjust_metrics()
+
+      ! Point to pressure solver linsol object
+      this%psolv=>pressure_solver
       
       ! Set 7-pt stencil map for the pressure solver
       this%psolv%stc(1,:)=[ 0, 0, 0]
@@ -861,22 +858,30 @@ contains
       this%psolv%opr(1,:,:,:)=this%cfg%VF
       
       ! Initialize the pressure Poisson solver
-      call this%psolv%init(pressure_ils)
+      call this%psolv%init()
       
-      ! Set 7-pt stencil map for the velocity solver
-      this%implicit%stc(1,:)=[ 0, 0, 0]
-      this%implicit%stc(2,:)=[+1, 0, 0]
-      this%implicit%stc(3,:)=[-1, 0, 0]
-      this%implicit%stc(4,:)=[ 0,+1, 0]
-      this%implicit%stc(5,:)=[ 0,-1, 0]
-      this%implicit%stc(6,:)=[ 0, 0,+1]
-      this%implicit%stc(7,:)=[ 0, 0,-1]
-      
-      ! Set the diagonal to 1 to make sure all cells participate in solver
-      this%implicit%opr(1,:,:,:)=1.0_WP
-      
-      ! Initialize the implicit velocity solver
-      call this%implicit%init(implicit_ils)
+      ! Prepare implicit solver if it had been provided
+      if (present(implicit_solver)) then
+         
+         ! Point to implicit solver linsol object
+         this%implicit=>implicit_solver
+         
+         ! Set 7-pt stencil map for the velocity solver
+         this%implicit%stc(1,:)=[ 0, 0, 0]
+         this%implicit%stc(2,:)=[+1, 0, 0]
+         this%implicit%stc(3,:)=[-1, 0, 0]
+         this%implicit%stc(4,:)=[ 0,+1, 0]
+         this%implicit%stc(5,:)=[ 0,-1, 0]
+         this%implicit%stc(6,:)=[ 0, 0,+1]
+         this%implicit%stc(7,:)=[ 0, 0,-1]
+         
+         ! Set the diagonal to 1 to make sure all cells participate in solver
+         this%implicit%opr(1,:,:,:)=1.0_WP
+         
+         ! Initialize the implicit velocity solver
+         call this%implicit%init()
+         
+      end if
       
    end subroutine setup
    
@@ -2275,23 +2280,11 @@ contains
       implicit none
       class(tpns), intent(in) :: this
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: pressure !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-      real(WP) :: vol_tot,pressure_tot,my_vol_tot,my_pressure_tot
-      integer :: i,j,k,ierr
+      real(WP) :: pressure_tot
+      integer :: i,j,k
       
-      ! Loop over domain and integrate volume and pressure
-      my_vol_tot=0.0_WP
-      my_pressure_tot=0.0_WP
-      do k=this%cfg%kmin_,this%cfg%kmax_
-         do j=this%cfg%jmin_,this%cfg%jmax_
-            do i=this%cfg%imin_,this%cfg%imax_
-               my_vol_tot     =my_vol_tot     +this%cfg%vol(i,j,k)*this%cfg%VF(i,j,k)
-               my_pressure_tot=my_pressure_tot+this%cfg%vol(i,j,k)*this%cfg%VF(i,j,k)*pressure(i,j,k)
-            end do
-         end do
-      end do
-      call MPI_ALLREDUCE(my_vol_tot     ,vol_tot     ,1,MPI_REAL_WP,MPI_SUM,this%cfg%comm,ierr)
-      call MPI_ALLREDUCE(my_pressure_tot,pressure_tot,1,MPI_REAL_WP,MPI_SUM,this%cfg%comm,ierr)
-      pressure_tot=pressure_tot/vol_tot
+      ! Compute volume-averaged pressure
+      call this%cfg%integrate(A=pressure,integral=pressure_tot); pressure_tot=pressure_tot/this%cfg%fluid_vol
       
       ! Shift the pressure
       do k=this%cfg%kmin_,this%cfg%kmax_

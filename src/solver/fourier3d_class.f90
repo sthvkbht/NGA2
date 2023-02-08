@@ -1,151 +1,115 @@
 !> 3D FFT pressure solver concept is defined by extension of the linsol class
 !> This solver is specifically intended to be a FFT-based pressure Poisson solver
 !> for 3D periodic uniform computational domains decomposed in at most 2 directions
-module pfft3d_class
+!> Makes use of FFTW and in-house parallel transpose operations
+module fourier3d_class
    use precision,    only: WP
    use config_class, only: config
    use string,       only: str_short
    use linsol_class, only: linsol
    use, intrinsic :: iso_c_binding
    implicit none
-   include 'fftw3.f'
    private
    
-   ! Expose type/constructor/methods
-   public :: pfft3d
    
-   !> pfft3d object definition
-   type, extends(linsol) :: pfft3d
-
+   ! Expose type/constructor/methods
+   public :: fourier3d
+   
+   
+   !> fourier3d object definition
+   type, extends(linsol) :: fourier3d
+      
       ! FFT's oddball
       logical :: oddball
       
       ! Data storage for FFTW plans
-      complex(C_DOUBLE_COMPLEX), dimension(:), allocatable :: in_x,out_x
-      complex(C_DOUBLE_COMPLEX), dimension(:), allocatable :: in_y,out_y
-      complex(C_DOUBLE_COMPLEX), dimension(:), allocatable :: in_z,out_z
+      complex(WP), dimension(:), allocatable :: in_x,out_x
+      complex(WP), dimension(:), allocatable :: in_y,out_y
+      complex(WP), dimension(:), allocatable :: in_z,out_z
       
       ! FFTW plans
-      integer(KIND=8) :: fplan_x,bplan_x
-      integer(KIND=8) :: fplan_y,bplan_y
-      integer(KIND=8) :: fplan_z,bplan_z
-
+      type(C_PTR) :: fplan_x,bplan_x
+      type(C_PTR) :: fplan_y,bplan_y
+      type(C_PTR) :: fplan_z,bplan_z
+      
       !> Unstrided arrays
-      complex(C_DOUBLE_COMPLEX), dimension(:,:,:), allocatable :: factored_operator, transformed_rhs
+      complex(WP), dimension(:,:,:), allocatable :: factored_operator
+      complex(WP), dimension(:,:,:), allocatable :: transformed_rhs
       
       ! Storage for transposed data
-      complex(C_DOUBLE_COMPLEX), dimension(:,:,:), allocatable :: xtrans
-      complex(C_DOUBLE_COMPLEX), dimension(:,:,:), allocatable :: ytrans
-      complex(C_DOUBLE_COMPLEX), dimension(:,:,:), allocatable :: ztrans
+      complex(WP), dimension(:,:,:), allocatable :: xtrans
+      complex(WP), dimension(:,:,:), allocatable :: ytrans
+      complex(WP), dimension(:,:,:), allocatable :: ztrans
       
       ! Transpose partition - X
       integer, dimension(:), allocatable :: imin_x,imax_x
       integer, dimension(:), allocatable :: jmin_x,jmax_x
       integer, dimension(:), allocatable :: kmin_x,kmax_x
       integer, dimension(:), allocatable :: nx_x,ny_x,nz_x
-      complex(C_DOUBLE_COMPLEX), dimension(:,:,:,:), allocatable :: sendbuf_x,recvbuf_x
+      complex(WP), dimension(:,:,:,:), allocatable :: sendbuf_x,recvbuf_x
       integer :: sendcount_x,recvcount_x
       character(len=str_short) :: xdir
-
+      
       ! Transpose partition - Y
       integer, dimension(:), allocatable :: imin_y,imax_y
       integer, dimension(:), allocatable :: jmin_y,jmax_y
       integer, dimension(:), allocatable :: kmin_y,kmax_y
       integer, dimension(:), allocatable :: nx_y,ny_y,nz_y
-      complex(C_DOUBLE_COMPLEX), dimension(:,:,:,:), allocatable :: sendbuf_y,recvbuf_y
+      complex(WP), dimension(:,:,:,:), allocatable :: sendbuf_y,recvbuf_y
       integer :: sendcount_y,recvcount_y
       character(len=str_short) :: ydir
-
+      
       ! Transpose partition - Z
       integer, dimension(:), allocatable :: imin_z,imax_z
       integer, dimension(:), allocatable :: jmin_z,jmax_z
       integer, dimension(:), allocatable :: kmin_z,kmax_z
       integer, dimension(:), allocatable :: nx_z,ny_z,nz_z
-      complex(C_DOUBLE_COMPLEX), dimension(:,:,:,:), allocatable :: sendbuf_z,recvbuf_z
+      complex(WP), dimension(:,:,:,:), allocatable :: sendbuf_z,recvbuf_z
       integer :: sendcount_z,recvcount_z
       character(len=str_short) :: zdir
       
    contains
       
-      procedure :: log => pfft3d_log                  !< Long-form logging of solver status
-      procedure :: print => pfft3d_print              !< Long-form printing of solver status
-      procedure :: print_short => pfft3d_print_short  !< One-line printing of solver status
-      procedure :: init => pfft3d_init                !< Grid and stencil initialization - done once for the grid and stencil
-      procedure :: setup => pfft3d_setup              !< Solver setup (every time the operator changes)
-      procedure :: solve => pfft3d_solve              !< Execute solver (assumes new RHS and initial guess at every call)
-      procedure :: destroy => pfft3d_destroy          !< Solver destruction (every time the operator changes)
+      procedure :: print_short=>fourier3d_print_short    !< One-line printing of solver status
+      procedure :: print=>fourier3d_print                !< Long-form printing of solver status
+      procedure :: log=>fourier3d_log                    !< Long-form logging of solver status
+      procedure :: init=>fourier3d_init                  !< Grid and stencil initialization - done once for the grid and stencil
+      procedure :: setup=>fourier3d_setup                !< Solver setup (every time the operator changes)
+      procedure :: solve=>fourier3d_solve                !< Execute solver (assumes new RHS and initial guess at every call)
+      procedure :: destroy=>fourier3d_destroy            !< Solver destruction (every time the operator changes)
+      
+      procedure, private :: fourier3d_fourier_transform
+      procedure, private :: fourier3d_inverse_transform
 
-      procedure, private :: pfft3d_fourier_transform
-      procedure, private :: pfft3d_inverse_transform
-
-      procedure, private :: pfft3d_xtranspose_init
-      procedure, private :: pfft3d_ytranspose_init
-      procedure, private :: pfft3d_ztranspose_init
+      procedure, private :: fourier3d_xtranspose_init
+      procedure, private :: fourier3d_ytranspose_init
+      procedure, private :: fourier3d_ztranspose_init
       
-      procedure, private :: pfft3d_xtranspose_forward
-      procedure, private :: pfft3d_ytranspose_forward
-      procedure, private :: pfft3d_ztranspose_forward
+      procedure, private :: fourier3d_xtranspose_forward
+      procedure, private :: fourier3d_ytranspose_forward
+      procedure, private :: fourier3d_ztranspose_forward
       
-      procedure, private :: pfft3d_xtranspose_backward
-      procedure, private :: pfft3d_ytranspose_backward
-      procedure, private :: pfft3d_ztranspose_backward
+      procedure, private :: fourier3d_xtranspose_backward
+      procedure, private :: fourier3d_ytranspose_backward
+      procedure, private :: fourier3d_ztranspose_backward
       
-   end type pfft3d
+   end type fourier3d
    
-   !> Declare pfft3d constructor
-   interface pfft3d
-      procedure pfft3d_from_args
-   end interface pfft3d
+   
+   !> Declare fourier3d constructor
+   interface fourier3d
+      procedure fourier3d_from_args
+   end interface fourier3d
    
    
 contains
    
    
-   !> Log pfft3d info
-   subroutine pfft3d_log(this)
-      use string,   only: str_long
-      use messager, only: log
-      implicit none
-      class(pfft3d), intent(in) :: this
-      character(len=str_long) :: message
-      
-      if (this%cfg%amRoot) then
-         write(message,'("PFFT3D solver [",a,"] for config [",a,"]")') trim(this%name),trim(this%cfg%name)
-         call log(message)
-      end if
-      
-   end subroutine pfft3d_log
-   
-   
-   !> Print pfft3d info to the screen
-   subroutine pfft3d_print(this)
-      use, intrinsic :: iso_fortran_env, only: output_unit
-      implicit none
-      
-      class(pfft3d), intent(in) :: this
-      if (this%cfg%amRoot) then
-         write(output_unit,'("PFFT3D solver [",a,"] for config [",a,"]")') trim(this%name),trim(this%cfg%name)
-      end if
-      
-   end subroutine pfft3d_print
-   
-   
-   !> Short print of pfft3d info to the screen
-   subroutine pfft3d_print_short(this)
-      use, intrinsic :: iso_fortran_env, only: output_unit
-      implicit none
-      class(pfft3d), intent(in) :: this
-      
-      if (this%cfg%amRoot) write(output_unit,'("PFFT3D solver [",a16,"] for config [",a16,"]")') trim(this%name),trim(this%cfg%name)
-      
-   end subroutine pfft3d_print_short
-   
-   
-   !> Constructor for an pfft3d object
-   function pfft3d_from_args(cfg,name,nst) result(self)
+   !> Constructor for a fourier3d object
+   function fourier3d_from_args(cfg,name,nst) result(self)
       use messager, only: die
       implicit none
-      type(pfft3d) :: self
+      type(fourier3d) :: self
       class(config), target, intent(in) :: cfg
       character(len=*), intent(in) :: name
       integer, intent(in) :: nst
@@ -154,79 +118,109 @@ contains
       self%cfg=>cfg
       self%name=trim(adjustl(name))
       
+      ! Set solution method - not used
+      self%method=0
+      
       ! Set up stencil size and map
-      self%nst=nst; allocate(self%stc(self%nst,3))
-
+      self%nst=nst
+      allocate(self%stc(1:self%nst,1:3))
+      self%stc=0
+      
       ! Allocate operator, rhs, and sol arrays
       allocate(self%opr(self%nst,self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%opr=0.0_WP
       allocate(self%rhs(         self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%rhs=0.0_WP
       allocate(self%sol(         self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%sol=0.0_WP
-
-      ! Allocate unstrided arrays
-      allocate(self%factored_operator(self%cfg%imin_:self%cfg%imax_,self%cfg%jmin_:self%cfg%jmax_,self%cfg%kmin_:self%cfg%kmax_))
-      allocate(self%transformed_rhs(self%cfg%imin_:self%cfg%imax_,self%cfg%jmin_:self%cfg%jmax_,self%cfg%kmin_:self%cfg%kmax_))
       
       ! Zero out some info
-      self%method=0; self%it=0; self%aerr=0.0_WP; self%rerr=0.0_WP
+      self%it=1
+      self%aerr=0.0_WP
+      self%rerr=0.0_WP
+      
+      ! Allocate unstrided arrays
+      allocate(self%factored_operator(self%cfg%imin_:self%cfg%imax_,self%cfg%jmin_:self%cfg%jmax_,self%cfg%kmin_:self%cfg%kmax_))
+      allocate(self%transformed_rhs  (self%cfg%imin_:self%cfg%imax_,self%cfg%jmin_:self%cfg%jmax_,self%cfg%kmin_:self%cfg%kmax_))
       
       ! Setup is not done
       self%setup_done=.false.
       
-   end function pfft3d_from_args
+      ! Various checks to ensure we can use this solver
+      check_solver_is_useable: block
+         integer :: ndim,ndcp
+         ! Periodicity and uniformity of mesh
+         if (self%cfg%nx.gt.1.and..not.(self%cfg%xper.and.self%cfg%uniform_x)) call die('[fourier3d constructor] Need x-direction needs to be periodic and uniform')
+         if (self%cfg%ny.gt.1.and..not.(self%cfg%yper.and.self%cfg%uniform_y)) call die('[fourier3d constructor] Need y-direction needs to be periodic and uniform')
+         if (self%cfg%nz.gt.1.and..not.(self%cfg%zper.and.self%cfg%uniform_z)) call die('[fourier3d constructor] Need z-direction needs to be periodic and uniform')
+         ! Ensure that we have at least one non-decomposed direction
+         ndim=0
+         if (self%cfg%nx.gt.1) ndim=ndim+1
+         if (self%cfg%ny.gt.1) ndim=ndim+1
+         if (self%cfg%nz.gt.1) ndim=ndim+1
+         ndcp=0
+         if (self%cfg%npx.gt.1) ndcp=ndcp+1
+         if (self%cfg%npy.gt.1) ndcp=ndcp+1
+         if (self%cfg%npz.gt.1) ndcp=ndcp+1
+         if (ndcp.ge.ndim) call die('[fourier3d constructor] Need at least one NON-decomposed direction')
+      end block check_solver_is_useable
+      
+   end function fourier3d_from_args
    
    
    !> Initialize grid and stencil - done at start-up only as long as the stencil or cfg does not change
    !> When calling, zero values of this%opr(1,:,:,:) indicate cells that do not participate in the solver
    !> Only the stencil needs to be defined at this point
-   subroutine pfft3d_init(this)
+   subroutine fourier3d_init(this)
       use messager, only: die
       implicit none
-      class(pfft3d), intent(inout) :: this
-
-      ! Various checks to ensure we can use this solver
-      check_solver_is_useable: block
-        ! Periodicity and uniformity of mesh
-        if (.not.(this%cfg%xper.and.this%cfg%uniform_x)) call die('[pfft3d constructor] Need x-direction needs to be periodic and uniform')
-        if (.not.(this%cfg%yper.and.this%cfg%uniform_y)) call die('[pfft3d constructor] Need y-direction needs to be periodic and uniform')
-        if (.not.(this%cfg%zper.and.this%cfg%uniform_z)) call die('[pfft3d constructor] Need z-direction needs to be periodic and uniform')
-      end block check_solver_is_useable
-
+      class(fourier3d), intent(inout) :: this
+      integer :: ierr,st,stx1,stx2,sty1,sty2,stz1,stz2
+      integer, dimension(3) :: periodicity,offset
+      include 'fftw3.f03'
+      
+      ! From the provided stencil, generate an inverse map
+      stx1=minval(this%stc(:,1)); stx2=maxval(this%stc(:,1))
+      sty1=minval(this%stc(:,2)); sty2=maxval(this%stc(:,2))
+      stz1=minval(this%stc(:,3)); stz2=maxval(this%stc(:,3))
+      allocate(this%stmap(stx1:stx2,sty1:sty2,stz1:stz2)); this%stmap=0
+      do st=1,this%nst
+         this%stmap(this%stc(st,1),this%stc(st,2),this%stc(st,3))=st
+      end do
+      
       ! Initialize transpose and FFTW plans in x
       if (this%cfg%nx.gt.1) then
-         call this%pfft3d_xtranspose_init()
+         call this%fourier3d_xtranspose_init()
          allocate(this%in_x(this%cfg%nx),this%out_x(this%cfg%nx))
-         call dfftw_plan_dft_1d(this%fplan_x,this%cfg%nx,this%in_x,this%out_x,FFTW_FORWARD,FFTW_MEASURE)
-         call dfftw_plan_dft_1d(this%bplan_x,this%cfg%nx,this%in_x,this%out_x,FFTW_BACKWARD,FFTW_MEASURE)
+         this%fplan_x=fftw_plan_dft_1d(this%cfg%nx,this%in_x,this%out_x,FFTW_FORWARD,FFTW_MEASURE)
+         this%bplan_x=fftw_plan_dft_1d(this%cfg%nx,this%in_x,this%out_x,FFTW_BACKWARD,FFTW_MEASURE)
       end if
-
+      
       ! Initialize transpose and FFTW plans in y
       if (this%cfg%ny.gt.1) then
-         call this%pfft3d_ytranspose_init()
+         call this%fourier3d_ytranspose_init()
          allocate(this%in_y(this%cfg%ny),this%out_y(this%cfg%ny))
-         call dfftw_plan_dft_1d(this%fplan_y,this%cfg%ny,this%in_y,this%out_y,FFTW_FORWARD,FFTW_MEASURE)
-         call dfftw_plan_dft_1d(this%bplan_y,this%cfg%ny,this%in_y,this%out_y,FFTW_BACKWARD,FFTW_MEASURE)
+         this%fplan_y=fftw_plan_dft_1d(this%cfg%ny,this%in_y,this%out_y,FFTW_FORWARD,FFTW_MEASURE)
+         this%bplan_y=fftw_plan_dft_1d(this%cfg%ny,this%in_y,this%out_y,FFTW_BACKWARD,FFTW_MEASURE)
       end if
-
+      
       ! Initialize transpose and FFTW plans in z
       if (this%cfg%nz.gt.1) then
-         call this%pfft3d_ztranspose_init()
+         call this%fourier3d_ztranspose_init()
          allocate(this%in_z(this%cfg%nz),this%out_z(this%cfg%nz))
-         call dfftw_plan_dft_1d(this%fplan_z,this%cfg%nz,this%in_z,this%out_z,FFTW_FORWARD,FFTW_MEASURE)
-         call dfftw_plan_dft_1d(this%bplan_z,this%cfg%nz,this%in_z,this%out_z,FFTW_BACKWARD,FFTW_MEASURE)
+         this%fplan_z=fftw_plan_dft_1d(this%cfg%nz,this%in_z,this%out_z,FFTW_FORWARD,FFTW_MEASURE)
+         this%bplan_z=fftw_plan_dft_1d(this%cfg%nz,this%in_z,this%out_z,FFTW_BACKWARD,FFTW_MEASURE)
       end if
       
       ! Find who owns the oddball
       this%oddball=.false.
       if (this%cfg%iproc.eq.1.and.this%cfg%jproc.eq.1.and.this%cfg%kproc.eq.1) this%oddball=.true.
       
-    end subroutine pfft3d_init
-
-
-    !> Initialize transpose tool in x
-    subroutine pfft3d_xtranspose_init(this)
+   end subroutine fourier3d_init
+   
+   
+   !> Initialize transpose tool in x
+   subroutine fourier3d_xtranspose_init(this)
       use mpi_f08
       implicit none
-      class(pfft3d), intent(inout) :: this
+      class(fourier3d), intent(inout) :: this
       integer :: ierr,ip,q,r
       
       ! Determine non-decomposed direction to use for transpose
@@ -337,14 +331,14 @@ contains
       ! Allocate storage
       allocate(this%xtrans(this%cfg%imin:this%cfg%imax,this%jmin_x(this%cfg%iproc):this%jmax_x(this%cfg%iproc),this%kmin_x(this%cfg%iproc):this%kmax_x(this%cfg%iproc)))
       
-   end subroutine pfft3d_xtranspose_init
+   end subroutine fourier3d_xtranspose_init
    
    
    !> Initialize transpose tool in y
-   subroutine pfft3d_ytranspose_init(this)
+   subroutine fourier3d_ytranspose_init(this)
       use mpi_f08
       implicit none
-      class(pfft3d), intent(inout) :: this
+      class(fourier3d), intent(inout) :: this
       integer :: ierr,jp,q,r
       
       ! Determine non-decomposed direction to use for transpose
@@ -455,14 +449,14 @@ contains
       ! Allocate storage
       allocate(this%ytrans(this%imin_y(this%cfg%jproc):this%imax_y(this%cfg%jproc),this%cfg%jmin:this%cfg%jmax,this%kmin_y(this%cfg%jproc):this%kmax_y(this%cfg%jproc)))
       
-   end subroutine pfft3d_ytranspose_init
+   end subroutine fourier3d_ytranspose_init
    
    
    !> Initialize transpose tool in z
-   subroutine pfft3d_ztranspose_init(this)
+   subroutine fourier3d_ztranspose_init(this)
       use mpi_f08
       implicit none
-      class(pfft3d), intent(inout) :: this
+      class(fourier3d), intent(inout) :: this
       integer :: ierr,kp,q,r
       
       ! Determine non-decomposed direction to use for transpose
@@ -573,17 +567,17 @@ contains
       ! Allocate storage
       allocate(this%ztrans(this%imin_z(this%cfg%kproc):this%imax_z(this%cfg%kproc),this%jmin_z(this%cfg%kproc):this%jmax_z(this%cfg%kproc),this%cfg%kmin:this%cfg%kmax))
       
-   end subroutine pfft3d_ztranspose_init
+   end subroutine fourier3d_ztranspose_init
    
    
    !> Perform forward transpose in x
-   subroutine pfft3d_xtranspose_forward(this,A,At)
+   subroutine fourier3d_xtranspose_forward(this,A,At)
       use mpi_f08
       use parallel, only: MPI_REAL_WP
       implicit none
-      class(pfft3d), intent(inout) :: this
-      complex(C_DOUBLE_COMPLEX), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(in) :: A
-      complex(C_DOUBLE_COMPLEX), dimension(this%cfg%imin :,this%jmin_x(this%cfg%iproc):,this%kmin_x(this%cfg%iproc):), intent(out) :: At
+      class(fourier3d), intent(inout) :: this
+      complex(WP), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(in) :: A
+      complex(WP), dimension(this%cfg%imin :,this%jmin_x(this%cfg%iproc):,this%kmin_x(this%cfg%iproc):), intent(out) :: At
       integer :: i,j,k,ip,ii,jj,kk,ierr
       
       select case (trim(this%xdir))
@@ -642,17 +636,17 @@ contains
          end do
       end select
       
-   end subroutine pfft3d_xtranspose_forward
+   end subroutine fourier3d_xtranspose_forward
    
    
    !> Perform forward transpose in y
-   subroutine pfft3d_ytranspose_forward(this,A,At)
+   subroutine fourier3d_ytranspose_forward(this,A,At)
       use mpi_f08
       use parallel, only: MPI_REAL_WP
       implicit none
-      class(pfft3d), intent(inout) :: this
-      complex(C_DOUBLE_COMPLEX), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(in) :: A
-      complex(C_DOUBLE_COMPLEX), dimension(this%imin_y(this%cfg%jproc):,this%cfg%jmin:,this%kmin_y(this%cfg%jproc):), intent(out) :: At
+      class(fourier3d), intent(inout) :: this
+      complex(WP), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(in) :: A
+      complex(WP), dimension(this%imin_y(this%cfg%jproc):,this%cfg%jmin:,this%kmin_y(this%cfg%jproc):), intent(out) :: At
       integer :: i,j,k,jp,ii,jj,kk,ierr
       
       select case (trim(this%ydir))
@@ -711,17 +705,17 @@ contains
          end do
       end select
       
-   end subroutine pfft3d_ytranspose_forward
+   end subroutine fourier3d_ytranspose_forward
    
    
    !> Perform forward transpose in z
-   subroutine pfft3d_ztranspose_forward(this,A,At)
+   subroutine fourier3d_ztranspose_forward(this,A,At)
       use mpi_f08
       use parallel, only: MPI_REAL_WP
       implicit none
-      class(pfft3d), intent(inout) :: this
-      complex(C_DOUBLE_COMPLEX), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(in) :: A
-      complex(C_DOUBLE_COMPLEX), dimension(this%imin_z(this%cfg%kproc):,this%jmin_z(this%cfg%kproc):,this%cfg%kmin:), intent(out) :: At
+      class(fourier3d), intent(inout) :: this
+      complex(WP), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(in) :: A
+      complex(WP), dimension(this%imin_z(this%cfg%kproc):,this%jmin_z(this%cfg%kproc):,this%cfg%kmin:), intent(out) :: At
       integer :: i,j,k,kp,ii,jj,kk,ierr
       
       select case (trim(this%zdir))
@@ -780,17 +774,17 @@ contains
          At=A
       end select
       
-   end subroutine pfft3d_ztranspose_forward
+   end subroutine fourier3d_ztranspose_forward
    
    
    !> Perform backward transpose in x
-   subroutine pfft3d_xtranspose_backward(this,At,A)
+   subroutine fourier3d_xtranspose_backward(this,At,A)
       use mpi_f08
       use parallel, only: MPI_REAL_WP
       implicit none
-      class(pfft3d), intent(inout) :: this
-      complex(C_DOUBLE_COMPLEX), dimension(this%cfg%imin :,this%jmin_x(this%cfg%iproc):,this%kmin_x(this%cfg%iproc):), intent(in) :: At
-      complex(C_DOUBLE_COMPLEX), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(out) :: A
+      class(fourier3d), intent(inout) :: this
+      complex(WP), dimension(this%cfg%imin :,this%jmin_x(this%cfg%iproc):,this%kmin_x(this%cfg%iproc):), intent(in) :: At
+      complex(WP), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(out) :: A
       integer :: i,j,k,ip,ii,jj,kk,ierr
       
       select case (trim(this%xdir))
@@ -849,17 +843,17 @@ contains
          end do
       end select
       
-   end subroutine pfft3d_xtranspose_backward
-
+   end subroutine fourier3d_xtranspose_backward
+   
    
    !> Perform backward transpose in y
-   subroutine pfft3d_ytranspose_backward(this,At,A)
+   subroutine fourier3d_ytranspose_backward(this,At,A)
       use mpi_f08
       use parallel, only: MPI_REAL_WP
       implicit none
-      class(pfft3d), intent(inout) :: this
-      complex(C_DOUBLE_COMPLEX), dimension(this%imin_y(this%cfg%jproc):,this%cfg%jmin:,this%kmin_y(this%cfg%jproc):), intent(in) :: At
-      complex(C_DOUBLE_COMPLEX), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(out) :: A
+      class(fourier3d), intent(inout) :: this
+      complex(WP), dimension(this%imin_y(this%cfg%jproc):,this%cfg%jmin:,this%kmin_y(this%cfg%jproc):), intent(in) :: At
+      complex(WP), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(out) :: A
       integer :: i,j,k,jp,ii,jj,kk,ierr
       
       select case (trim(this%ydir))
@@ -918,17 +912,17 @@ contains
          end do
       end select
       
-   end subroutine pfft3d_ytranspose_backward
+   end subroutine fourier3d_ytranspose_backward
    
    
    !> Perform backward transpose in z
-   subroutine pfft3d_ztranspose_backward(this,At,A)
+   subroutine fourier3d_ztranspose_backward(this,At,A)
       use mpi_f08
       use parallel, only: MPI_REAL_WP
       implicit none
-      class(pfft3d), intent(inout) :: this
-      complex(C_DOUBLE_COMPLEX), dimension(this%imin_z(this%cfg%kproc):,this%jmin_z(this%cfg%kproc):,this%cfg%kmin:), intent(in) :: At
-      complex(C_DOUBLE_COMPLEX), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(out) :: A
+      class(fourier3d), intent(inout) :: this
+      complex(WP), dimension(this%imin_z(this%cfg%kproc):,this%jmin_z(this%cfg%kproc):,this%cfg%kmin:), intent(in) :: At
+      complex(WP), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(out) :: A
       integer :: i,j,k,kp,ii,jj,kk,ierr
       
       select case (trim(this%zdir))
@@ -987,248 +981,277 @@ contains
          A=At
       end select
       
-    end subroutine pfft3d_ztranspose_backward
-
-
-    !> Transpose A and perform Fourier transform
-    subroutine pfft3d_fourier_transform(this,A)
+   end subroutine fourier3d_ztranspose_backward
+   
+   
+   !> Transpose A and perform Fourier transform
+   subroutine fourier3d_fourier_transform(this,A)
       implicit none
-      class(pfft3d), intent(inout) :: this
-      complex(C_DOUBLE_COMPLEX), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(inout) :: A         !< Needs to be (imin_:imax_,jmin_:jmax_,kmin_:kmax_)
+      class(fourier3d), intent(inout) :: this
+      complex(WP), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(inout) :: A         !< Needs to be (imin_:imax_,jmin_:jmax_,kmin_:kmax_)
       integer :: i,j,k
-
+      include 'fftw3.f03'
+      
       if (this%cfg%nx.gt.1) then
          ! Transpose in X
-         call this%pfft3d_xtranspose_forward(A,this%xtrans)
+         call this%fourier3d_xtranspose_forward(A,this%xtrans)
          ! Forward transform - X
          do k=this%kmin_x(this%cfg%iproc),this%kmax_x(this%cfg%iproc)
             do j=this%jmin_x(this%cfg%iproc),this%jmax_x(this%cfg%iproc)
-               this%in_x =this%xtrans(:,j,k)
-               call dfftw_execute(this%fplan_x,this%in_x,this%out_x)
-               this%xtrans(:,j,k) = this%out_x
+               this%in_x=this%xtrans(:,j,k)
+               call fftw_execute_dft(this%fplan_x,this%in_x,this%out_x)
+               this%xtrans(:,j,k)=this%out_x
             end do
          end do
          ! Transpose back
-         call this%pfft3d_xtranspose_backward(this%xtrans,A)
+         call this%fourier3d_xtranspose_backward(this%xtrans,A)
       end if
-
+      
       if (this%cfg%ny.gt.1) then
          ! Transpose in Y
-         call this%pfft3d_ytranspose_forward(A,this%ytrans)
+         call this%fourier3d_ytranspose_forward(A,this%ytrans)
          ! Forward transform - Y
          do k=this%kmin_y(this%cfg%jproc),this%kmax_y(this%cfg%jproc)
             do i=this%imin_y(this%cfg%jproc),this%imax_y(this%cfg%jproc)
-               this%in_y = this%ytrans(i,:,k)
-               call dfftw_execute(this%fplan_y,this%in_y,this%out_y)
-               this%ytrans(i,:,k) = this%out_y
+               this%in_y=this%ytrans(i,:,k)
+               call fftw_execute_dft(this%fplan_y,this%in_y,this%out_y)
+               this%ytrans(i,:,k)=this%out_y
             end do
          end do
          ! Transpose back
-         call this%pfft3d_ytranspose_backward(this%ytrans,A)
+         call this%fourier3d_ytranspose_backward(this%ytrans,A)
       end if
-
+      
       if (this%cfg%nz.gt.1) then
          ! Transpose in Z
-         call this%pfft3d_ztranspose_forward(A,this%ztrans)
+         call this%fourier3d_ztranspose_forward(A,this%ztrans)
          ! Forward transform - Z
          do j=this%jmin_z(this%cfg%kproc),this%jmax_z(this%cfg%kproc)
             do i=this%imin_z(this%cfg%kproc),this%imax_z(this%cfg%kproc)
-               this%in_z = this%ztrans(i,j,:)
-               call dfftw_execute(this%fplan_z,this%in_z,this%out_z)
-               this%ztrans(i,j,:) = this%out_z
+               this%in_z=this%ztrans(i,j,:)
+               call fftw_execute_dft(this%fplan_z,this%in_z,this%out_z)
+               this%ztrans(i,j,:)=this%out_z
             end do
          end do
          ! Transpose back
-         call this%pfft3d_ztranspose_backward(this%ztrans,A)
+         call this%fourier3d_ztranspose_backward(this%ztrans,A)
       end if
-
+      
       ! Oddball
-      if (this%oddball) A(this%cfg%imin_,this%cfg%jmin_,this%cfg%kmin_) = 0.0_WP
-
-    end subroutine pfft3d_fourier_transform
-
-
-    !> FFT -> real and transpose back
-    subroutine pfft3d_inverse_transform(this,A)
+      if (this%oddball) A(this%cfg%imin_,this%cfg%jmin_,this%cfg%kmin_)=0.0_WP
+      
+   end subroutine fourier3d_fourier_transform
+   
+   
+   !> FFT -> real and transpose back
+   subroutine fourier3d_inverse_transform(this,A)
       implicit none
-      class(pfft3d), intent(inout) :: this
-      complex(C_DOUBLE_COMPLEX), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(inout) :: A         !< Needs to be (imin_:imax_,jmin_:jmax_,kmin_:kmax_)
+      class(fourier3d), intent(inout) :: this
+      complex(WP), dimension(this%cfg%imin_:,this%cfg%jmin_:,this%cfg%kmin_:), intent(inout) :: A         !< Needs to be (imin_:imax_,jmin_:jmax_,kmin_:kmax_)
       integer :: i,j,k
-
+      include 'fftw3.f03'
+      
       if (this%cfg%nx.gt.1) then
          ! Transpose in X
-         call this%pfft3d_xtranspose_forward(A,this%xtrans)
+         call this%fourier3d_xtranspose_forward(A,this%xtrans)
          ! Inverse transform
          do k=this%kmin_x(this%cfg%iproc),this%kmax_x(this%cfg%iproc)
             do j=this%jmin_x(this%cfg%iproc),this%jmax_x(this%cfg%iproc)
-               this%in_x = this%xtrans(:,j,k)
-               call dfftw_execute(this%bplan_x,this%in_x,this%out_x)
-               this%xtrans(:,j,k) = this%out_x/this%cfg%nx
+               this%in_x=this%xtrans(:,j,k)
+               call fftw_execute_dft(this%bplan_x,this%in_x,this%out_x)
+               this%xtrans(:,j,k)=this%out_x/this%cfg%nx
             end do
          end do
          ! Transpose back
-         call this%pfft3d_xtranspose_backward(this%xtrans,A)
+         call this%fourier3d_xtranspose_backward(this%xtrans,A)
       end if
-
+      
       if (this%cfg%ny.gt.1) then
          ! Transpose in Y
-         call this%pfft3d_ytranspose_forward(A,this%ytrans)
+         call this%fourier3d_ytranspose_forward(A,this%ytrans)
          ! Inverse transform
          do k=this%kmin_y(this%cfg%jproc),this%kmax_y(this%cfg%jproc)
             do i=this%imin_y(this%cfg%jproc),this%imax_y(this%cfg%jproc)
-               this%in_y = this%ytrans(i,:,k)
-               call dfftw_execute(this%bplan_y,this%in_y,this%out_y)
-               this%ytrans(i,:,k) = this%out_y/this%cfg%ny
+               this%in_y=this%ytrans(i,:,k)
+               call fftw_execute_dft(this%bplan_y,this%in_y,this%out_y)
+               this%ytrans(i,:,k)=this%out_y/this%cfg%ny
             end do
          end do
          ! Transpose back
-         call this%pfft3d_ytranspose_backward(this%ytrans,A)
+         call this%fourier3d_ytranspose_backward(this%ytrans,A)
       end if
-
+      
       if (this%cfg%nz.gt.1) then
          ! Transpose in Z
-         call this%pfft3d_ztranspose_forward(A,this%ztrans)
+         call this%fourier3d_ztranspose_forward(A,this%ztrans)
          ! Inverse transform
          do j=this%jmin_z(this%cfg%kproc),this%jmax_z(this%cfg%kproc)
             do i=this%imin_z(this%cfg%kproc),this%imax_z(this%cfg%kproc)
-               this%in_z = this%ztrans(i,j,:)
-               call dfftw_execute(this%bplan_z,this%in_z,this%out_z)
-               this%ztrans(i,j,:) = this%out_z/this%cfg%nz
+               this%in_z=this%ztrans(i,j,:)
+               call fftw_execute_dft(this%bplan_z,this%in_z,this%out_z)
+               this%ztrans(i,j,:)=this%out_z/this%cfg%nz
             end do
          end do
          ! Transpose back
-         call this%pfft3d_ztranspose_backward(this%ztrans,A)
+         call this%fourier3d_ztranspose_backward(this%ztrans,A)
       end if
 
-    end subroutine pfft3d_inverse_transform
-   
-   
-   !> Setup solver - done everytime the operator changes
-   subroutine pfft3d_setup(this)
-      use mpi_f08,  only:  MPI_BCAST, MPI_COMM_WORLD, MPI_ALLREDUCE, MPI_INTEGER, MPI_SUM
-      use parallel, only: MPI_REAL_WP
+end subroutine fourier3d_inverse_transform
+
+
+!> Setup solver - done everytime the operator changes
+   subroutine fourier3d_setup(this)
       use messager, only: die
+      use mpi_f08,  only: MPI_BCAST,MPI_ALLREDUCE,MPI_INTEGER,MPI_SUM
+      use parallel, only: MPI_REAL_WP
       implicit none
-      integer :: i,j,k,n,stx1,stx2,sty1,sty2,stz1,stz2,ierr
-      class(pfft3d), intent(inout) :: this
-      logical :: circulent
-      real(WP), dimension(this%nst) :: ref_stencil
-      real(WP), dimension(this%cfg%imin_:this%cfg%imax_,this%cfg%jmin_:this%cfg%jmax_,this%cfg%kmin_:this%cfg%kmax_) :: opr_col
+      class(fourier3d), intent(inout) :: this
+      real(WP), dimension(1:this%nst) :: ref_opr
+      logical :: circulant
+      integer :: i,j,k,n,ierr
       
-      ! Compute stencil inverse
-      stx1=minval(this%stc(:,1)); stx2=maxval(this%stc(:,1));
-      sty1=minval(this%stc(:,2)); sty2=maxval(this%stc(:,2));
-      stz1=minval(this%stc(:,3)); stz2=maxval(this%stc(:,3));
-      allocate(this%stmap(stx1:stx2,sty1:sty2,stz1:stz2))
-      do n=1,this%nst
-         this%stmap(this%stc(n,1),this%stc(n,2),this%stc(n,3))=n
-      end do
+      ! If the solver has already been setup, destroy it first
+      if (this%setup_done) call this%destroy()
       
       ! Check circulent operator
-      if (this%cfg%amRoot) ref_stencil=this%opr(:,1,1,1)
-      call MPI_BCAST(ref_stencil,this%nst,MPI_REAL_WP,0,this%cfg%comm,ierr)
-      circulent=.true.
+      if (this%cfg%amRoot) ref_opr=this%opr(:,this%cfg%imin,this%cfg%jmin,this%cfg%kmin)
+      call MPI_BCAST(ref_opr,this%nst,MPI_REAL_WP,0,this%cfg%comm,ierr)
+      circulant=.true.
       do k=this%cfg%kmin_,this%cfg%kmax_
          do j=this%cfg%jmin_,this%cfg%jmax_
             do i=this%cfg%imin_,this%cfg%imax_
-               if (any(abs(this%opr(:,i,j,k)-ref_stencil(:)).gt.6.0_WP*epsilon(1.0_WP)/this%cfg%min_meshsize**4)) circulent=.false.
+               if (any(abs(this%opr(:,i,j,k)-ref_opr).gt.6.0_WP*epsilon(1.0_WP)/this%cfg%min_meshsize**4)) circulant=.false.
             end do
          end do
       end do
-      if (.not.circulent) then
-         call die('[pfft3d] stencil must be uniform in space')
-      end if
-
+      if (.not.circulant) call die('[fourier3d setup] operator must be uniform in space')
+      
       ! Build the operator
-      this%factored_operator(:,:,:) = 0.0_C_DOUBLE
-      do n = 1, this%nst
-         i = modulo(this%stc(n,1) - this%cfg%imin + 1, this%cfg%nx) + this%cfg%imin
-         j = modulo(this%stc(n,2) - this%cfg%jmin + 1, this%cfg%ny) + this%cfg%jmin
-         k = modulo(this%stc(n,3) - this%cfg%kmin + 1, this%cfg%nz) + this%cfg%kmin
-         if (                                                                    &
-              this%cfg%imin_ .le. i .and. i .le. this%cfg%imax_ .and.               &
-              this%cfg%jmin_ .le. j .and. j .le. this%cfg%jmax_ .and.               &
-              this%cfg%kmin_ .le. k .and. k .le. this%cfg%kmax_                     &
-              ) this%factored_operator(i,j,k) =this%factored_operator(i,j,k) +      &
-              real(ref_stencil(n), C_DOUBLE)
+      this%factored_operator=0.0_WP
+      do n=1,this%nst
+         i=modulo(this%stc(n,1)-this%cfg%imin+1,this%cfg%nx)+this%cfg%imin
+         j=modulo(this%stc(n,2)-this%cfg%jmin+1,this%cfg%ny)+this%cfg%jmin
+         k=modulo(this%stc(n,3)-this%cfg%kmin+1,this%cfg%nz)+this%cfg%kmin
+         if (this%cfg%imin_.le.i.and.i.le.this%cfg%imax_.and.&
+         &   this%cfg%jmin_.le.j.and.j.le.this%cfg%jmax_.and.&
+         &   this%cfg%kmin_.le.k.and.k.le.this%cfg%kmax_) this%factored_operator(i,j,k)=this%factored_operator(i,j,k)+real(ref_opr(n),WP)
       end do
-
+      
       ! Take transform of operator
-      call this%pfft3d_fourier_transform(this%factored_operator)
+      call this%fourier3d_fourier_transform(this%factored_operator)
       
       ! Make zero wavenumber not zero
       ! Setting this to one has the nice side effect of returning a solution with the same integral
       if (this%oddball) this%factored_operator(this%cfg%imin_,this%cfg%jmin_,this%cfg%kmin_)=1.0_C_DOUBLE
       
       ! Make sure other wavenumbers are not close to zero
-      i=count(abs(this%factored_operator).lt.1000_WP*epsilon(1.0_C_DOUBLE))
+      i=count(abs(this%factored_operator).lt.1000_WP*epsilon(1.0_WP))
       call MPI_ALLREDUCE(i,j,1,MPI_INTEGER,MPI_SUM,this%cfg%comm,ierr)
-      if (j.gt.0) call die('[pfft3d] elements of transformed operator near zero')
+      if (j.gt.0) then
+         print*,j
+         call die('[fourier3d setup] elements of transformed operator near zero')
+      end if
       
       ! Divide now instead of later
-      this%factored_operator = 1.0_C_DOUBLE / this%factored_operator
+      this%factored_operator=1.0_WP/this%factored_operator
       
       ! Check for division issues
       i=count(isnan(abs(this%factored_operator)))
       call MPI_ALLREDUCE(i,j,1,MPI_INTEGER,MPI_SUM,this%cfg%comm,ierr)
-      if (j.gt.0) call die('[pfft3d] elements of transformed operator are nan')
+      if (j.gt.0) call die('[fourier3d setup] elements of transformed operator are NaN')
       
       ! Set setup-flag to true
       this%setup_done=.true.
       
-   end subroutine pfft3d_setup
+   end subroutine fourier3d_setup
    
    
-   !> Do the solve
-   subroutine pfft3d_solve(this)
+   !> Solve the linear system iteratively
+   subroutine fourier3d_solve(this)
       use messager, only: die
       use param,    only: verbose
       implicit none
-      class(pfft3d), intent(inout) :: this
-      integer :: imn_,imx_,jmn_,jmx_,kmn_,kmx_
+      class(fourier3d), intent(inout) :: this
+      integer :: i,j,k,ierr
       
-      if (.not.this%setup_done) call die('[pfftd3] solve called before setup')
-      
-      imn_=this%cfg%imin_; imx_=this%cfg%imax_;
-      jmn_=this%cfg%jmin_; jmx_=this%cfg%jmax_;
-      kmn_=this%cfg%kmin_; kmx_=this%cfg%kmax_;
+      ! Check that setup was done
+      if (.not.this%setup_done) call die('[fourier3d solve] Solver has not been setup.')
       
       ! Copy to unstrided array
-      this%transformed_rhs=this%rhs(imn_:imx_,jmn_:jmx_,kmn_:kmx_)
-
+      this%transformed_rhs=this%rhs(this%cfg%imin_:this%cfg%imax_,this%cfg%jmin_:this%cfg%jmax_,this%cfg%kmin_:this%cfg%kmax_)
+      
       ! Forward transform
-      call this%pfft3d_fourier_transform(this%transformed_rhs)
-
+      call this%fourier3d_fourier_transform(this%transformed_rhs)
+      
       ! Divide
       this%transformed_rhs=this%transformed_rhs*this%factored_operator
-
-      ! Backward transform
-      call this%pfft3d_inverse_transform(this%transformed_rhs)
-
-      ! Copy to strided output
-      this%sol(imn_:imx_,jmn_:jmx_,kmn_:kmx_) = this%transformed_rhs(:,:,:)
       
-      ! Sync
+      ! Backward transform
+      call this%fourier3d_inverse_transform(this%transformed_rhs)
+      
+      ! Copy to strided output
+      this%sol(this%cfg%imin_:this%cfg%imax_,this%cfg%jmin_:this%cfg%jmax_,this%cfg%kmin_:this%cfg%kmax_)=this%transformed_rhs
+      
+      ! Sync the solution vector
       call this%cfg%sync(this%sol)
       
       ! If verbose run, log and or print info
       if (verbose.gt.0) call this%log
       if (verbose.gt.1) call this%print_short
       
-   end subroutine pfft3d_solve
+   end subroutine fourier3d_solve
    
    
-   subroutine pfft3d_destroy(this)
+   !> Destroy solver - done everytime the operator changes
+   subroutine fourier3d_destroy(this)
+      use messager, only: die
       implicit none
-      class(pfft3d), intent(inout) :: this
+      class(fourier3d), intent(inout) :: this
+      integer :: ierr
+      include 'fftw3.f03'
       
+      ! Destroy our plans
+      call fftw_destroy_plan(this%fplan_x); call fftw_destroy_plan(this%bplan_x)
+      call fftw_destroy_plan(this%fplan_y); call fftw_destroy_plan(this%bplan_y)
+      call fftw_destroy_plan(this%fplan_z); call fftw_destroy_plan(this%bplan_z)
+      
+      ! Set setup-flag to false
       this%setup_done=.false.
       
-      call dfftw_destroy_plan(this%fplan_x); call dfftw_destroy_plan(this%bplan_x)
-      call dfftw_destroy_plan(this%fplan_y); call dfftw_destroy_plan(this%bplan_y)
-      call dfftw_destroy_plan(this%fplan_z); call dfftw_destroy_plan(this%bplan_z)
-      
-   end subroutine pfft3d_destroy
+   end subroutine fourier3d_destroy
    
-end module pfft3d_class
-
+   
+   !> Log fourier3d info
+   subroutine fourier3d_log(this)
+      use string,   only: str_long
+      use messager, only: log
+      implicit none
+      class(fourier3d), intent(in) :: this
+      character(len=str_long) :: message
+      if (this%cfg%amRoot) then
+         write(message,'("fourier3d solver [",a,"] for config [",a,"]")') trim(this%name),trim(this%cfg%name); call log(message)
+      end if
+   end subroutine fourier3d_log
+   
+   
+   !> Print fourier3d info to the screen
+   subroutine fourier3d_print(this)
+      use, intrinsic :: iso_fortran_env, only: output_unit
+      implicit none
+      class(fourier3d), intent(in) :: this
+      if (this%cfg%amRoot) then
+         write(output_unit,'("fourier3d solver [",a,"] for config [",a,"]")') trim(this%name),trim(this%cfg%name)
+      end if
+   end subroutine fourier3d_print
+   
+   
+   !> Short print of fourier3d info to the screen
+   subroutine fourier3d_print_short(this)
+      use, intrinsic :: iso_fortran_env, only: output_unit
+      implicit none
+      class(fourier3d), intent(in) :: this
+      if (this%cfg%amRoot) write(output_unit,'("fourier3d solver [",a16,"] for config [",a16,"]")') trim(this%name),trim(this%cfg%name)
+   end subroutine fourier3d_print_short
+   
+   
+end module fourier3d_class
