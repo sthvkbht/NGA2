@@ -490,9 +490,11 @@ contains
 
     ! Create monitor filea
     create_monitor: block
+      real(WP) :: buf
       ! Prepare some info about fields
-      call fs%get_cfl(time%dt,time%cfl)
-      call lp%get_cfl(time%dt,time%cfl)
+      call lp%get_cfl(time%dt,cflc=buf,cfl=time%cfl)
+      call fs%get_cfl(time%dt,buf)
+      time%cfl=max(time%cfl,buf)
       call fs%get_max()
       call lp%get_max()
       ! Create simulation monitor
@@ -573,6 +575,7 @@ contains
   subroutine simulation_run
     use parallel, only: parallel_time
     implicit none
+    real(WP) :: buf
 
     ! Perform time integration
     do while (.not.time%done())
@@ -581,8 +584,9 @@ contains
        wt_total%time_in=parallel_time()
 
        ! Increment time
-       call fs%get_cfl(time%dt,time%cfl)
-       call lp%get_cfl(time%dt,time%cfl)
+       call lp%get_cfl(time%dt,cflc=buf,cfl=time%cfl)
+       call fs%get_cfl(time%dt,buf)
+       time%cfl=max(time%cfl,buf)
        call time%adjust_dt()
        call time%increment()
 
