@@ -115,7 +115,7 @@ module mast_class
       real(WP), dimension(:,:,:), allocatable :: dPjy     !< dPressure jump to add to -ddP/dy
       real(WP), dimension(:,:,:), allocatable :: dPjz     !< dPressure jump to add to -ddP/dz
       real(WP), dimension(:,:,:), allocatable :: Tmptr    !< Temperature of mixture
-
+      
       ! Flow variables - individual phases
       real(WP), dimension(:,:,:), allocatable :: Grho,   Lrho    !< phase density arrays
       real(WP), dimension(:,:,:), allocatable :: GrhoE,  LrhoE   !< phase energy arrays

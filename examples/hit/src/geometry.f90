@@ -22,7 +22,7 @@ contains
       
       ! Create a grid from input params
       create_grid: block
-        use sgrid_class, only: cartesian
+         use sgrid_class, only: cartesian
          integer :: i,nx
          real(WP) :: Lx
          real(WP), dimension(:), allocatable :: x
@@ -40,7 +40,7 @@ contains
       
       ! Create a config from that grid on our entire group
       create_cfg: block
-        use parallel, only: group
+         use parallel, only: group
          integer, dimension(3) :: partition
          ! Read in partition
          call param_read('Partition',partition,short='p')

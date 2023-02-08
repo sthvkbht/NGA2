@@ -79,7 +79,7 @@ module lpt_class
      ! Solver parameters
      real(WP) :: nstep=1                                 !< Number of substeps (default=1)
      character(len=str_medium), public :: drag_model     !< Drag model
-
+     
      ! Collisional parameters
      real(WP) :: tau_col                                 !< Characteristic collision time scale
      real(WP) :: e_n                                     !< Normal restitution coefficient
@@ -376,7 +376,7 @@ contains
         this%p(i)%Tcol=0.0_WP
      end do
    end block zero_force
-
+   
    ! Then share particles across overlap
    call this%share()
 
@@ -807,7 +807,6 @@ contains
       fVF=1.0_WP-pVF
       ! Interpolate the fluid temperature to the particle location if present
       if (present(T)) fT=this%cfg%get_scalar(pos=p%pos,i0=p%ind(1),j0=p%ind(2),k0=p%ind(3),S=T,bc='n')
-      ! Interpolate the fluid vorticity to the particle location if needed
     end block interpolate
 
     ! Compute acceleration due to drag
@@ -840,17 +839,19 @@ contains
       opt_dt=tau/real(this%nstep,WP)
     end block compute_drag
 
-!!$    ! Compute acceleration due to Saffman lift
-!!$    compute_lift: block
-!!$      use mathtools, only: Pi,cross_product
-!!$      real(WP) :: omegag,Cl,Reg
-!!$      omegag=sqrt(sum(fvort**2))
-!!$      if (omegag.gt.0.0_WP) then
-!!$         Reg = p%d**2*omegag*frho/fvisc
-!!$         Cl = 9.69_WP/Pi/p%d**2/this%rho*fvisc/omegag*sqrt(Reg)
-!!$         acc=acc+Cl*cross_product(fvel-p%vel,fvort)
-!!$      end if
-!!$    end block compute_lift
+    ! Compute acceleration due to Saffman lift
+    !compute_lift: block
+   !   use mathtools, only: Pi,cross_product
+   !   real(WP) :: omegag,Cl,Reg
+   !   if (this%use_lift) then
+   !      omegag=sqrt(sum(fvort**2))
+   !      if (omegag.gt.0.0_WP) then
+   !         Reg = p%d**2*omegag*frho/fvisc
+   !         Cl = 9.69_WP/Pi/p%d**2/this%rho*fvisc/omegag*sqrt(Reg)
+   !         acc=acc+Cl*cross_product(fvel-p%vel,fvort)
+   !      end if
+   !   end if
+    !end block compute_lift
 
     ! Compute fluid torque (assumed Stokes drag)
     compute_torque: block
@@ -999,7 +1000,7 @@ contains
     implicit none
     class(lpt), intent(inout) :: this
     real(WP), intent(inout) :: dt                  !< Timestep size over which to advance
-    logical, intent(in), optional :: avoid_overlap !< Option to avoid overlap durig injection
+    logical, intent(in), optional :: avoid_overlap !< Option to avoid overlap during injection
     real(WP) :: inj_min(3),inj_max(3)              !< Min/max extents of injection
     real(WP) :: Mgoal,Madded,Mtmp,buf              !< Mass flow rate parameters
     real(WP), save :: previous_error=0.0_WP        !< Store mass left over from previous timestep
@@ -1235,7 +1236,7 @@ contains
 
     ! If asked for, also return the maximum overall CFL
     if (present(CFL)) cfl=max(cflc,this%CFL_col)
-
+    
   end subroutine get_cfl
 
 
@@ -1245,7 +1246,7 @@ contains
     use parallel, only: MPI_REAL_WP
     implicit none
     class(lpt), intent(inout) :: this
-    real(WP) :: buf,safe_np,vol_total
+    real(WP) :: buf,safe_np
     integer :: i,j,k,ierr
 
     ! Create safe np
@@ -1292,14 +1293,12 @@ contains
     call MPI_ALLREDUCE(this%Wvar,buf,1,MPI_REAL_WP,MPI_SUM,this%cfg%comm,ierr); this%Wvar=buf/safe_np
 
     ! Get mean, max, and min volume fraction
-    vol_total=0.0_WP
     this%VFmean=0.0_WP
     this%VFmax =-huge(1.0_WP)
     this%VFmin =+huge(1.0_WP)
     do k=this%cfg%kmin_,this%cfg%kmax_
        do j=this%cfg%jmin_,this%cfg%jmax_
           do i=this%cfg%imin_,this%cfg%imax_
-             vol_total=vol_total+this%cfg%VF(i,j,k)*this%cfg%vol(i,j,k)
              this%VFmean=this%VFmean+this%cfg%VF(i,j,k)*this%cfg%vol(i,j,k)*this%VF(i,j,k)
              this%VFmax =max(this%VFmax,this%VF(i,j,k))
              this%VFmin =min(this%VFmin,this%VF(i,j,k))
