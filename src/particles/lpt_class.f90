@@ -79,10 +79,8 @@ module lpt_class
      ! Solver parameters
      real(WP) :: nstep=1                                 !< Number of substeps (default=1)
      character(len=str_medium), public :: drag_model     !< Drag model
-     logical :: use_lift=.false.                         !< Compute lift force on particles
-
+     
      ! Collisional parameters
-     logical :: use_col=.true.                           !< Flag for collisions
      real(WP) :: tau_col                                 !< Characteristic collision time scale
      real(WP) :: e_n                                     !< Normal restitution coefficient
      real(WP) :: e_w                                     !< Wall restitution coefficient
@@ -350,233 +348,279 @@ contains
   end function constructor
   
 
-  !> Resolve collisional interaction between particles
+  !> Resolve collisional interaction between particles, walls, and an optional IB level set
   !> Requires tau_col, e_n, e_w and mu_f to be set beforehand
-  subroutine collide(this,dt)
-    implicit none
-    class(lpt), intent(inout) :: this
-    real(WP), intent(inout) :: dt  !< Timestep size over which to advance
-    integer, dimension(:,:,:), allocatable :: npic      !< Number of particle in cell
-    integer, dimension(:,:,:,:), allocatable :: ipic    !< Index of particle in cell
+  subroutine collide(this,dt,Gib,Nxib,Nyib,Nzib)
+   implicit none
+   class(lpt), intent(inout) :: this
+   real(WP), intent(inout) :: dt  !< Timestep size over which to advance
+   real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: Gib  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+   real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: Nxib !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+   real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: Nyib !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+   real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: Nzib !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+   integer, dimension(:,:,:), allocatable :: npic      !< Number of particle in cell
+   integer, dimension(:,:,:,:), allocatable :: ipic    !< Index of particle in cell
 
-    ! Start by zeroing out the collision force
-    zero_force: block
-      integer :: i
-      do i=1,this%np_
-         this%p(i)%Acol=0.0_WP
-         this%p(i)%Tcol=0.0_WP
-      end do
-    end block zero_force
+   ! Check if all IB parameters are present
+   check_G: block
+     use messager, only: die
+     if (present(Gib).and.(.not.present(Nxib).or..not.present(Nyib).or..not.present(Nzib))) &
+          call die('[lpt collide] IB collisions need Gib, Nxib, Nyib, AND Nzib')
+   end block check_G
 
-    ! Return if not used
-    if (.not.this%use_col) return
+   ! Start by zeroing out the collision force
+   zero_force: block
+     integer :: i
+     do i=1,this%np_
+        this%p(i)%Acol=0.0_WP
+        this%p(i)%Tcol=0.0_WP
+     end do
+   end block zero_force
+   
+   ! Then share particles across overlap
+   call this%share()
 
-    ! Then share particles across overlap
-    call this%share()
+   ! We can now assemble particle-in-cell information
+   pic_prep: block
+     use mpi_f08
+     integer :: i,ip,jp,kp,ierr
+     integer :: mymax_npic,max_npic
 
-    ! We can now assemble particle-in-cell information
-    pic_prep: block
-      use mpi_f08
-      integer :: i,ip,jp,kp,ierr
-      integer :: mymax_npic,max_npic
+     ! Allocate number of particle in cell
+     allocate(npic(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); npic=0
 
-      ! Allocate number of particle in cell
-      allocate(npic(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); npic=0
+     ! Count particles and ghosts per cell
+     do i=1,this%np_
+        ip=this%p(i)%ind(1); jp=this%p(i)%ind(2); kp=this%p(i)%ind(3)
+        npic(ip,jp,kp)=npic(ip,jp,kp)+1
+     end do
+     do i=1,this%ng_
+        ip=this%g(i)%ind(1); jp=this%g(i)%ind(2); kp=this%g(i)%ind(3)
+        npic(ip,jp,kp)=npic(ip,jp,kp)+1
+     end do
 
-      ! Count particles and ghosts per cell
-      do i=1,this%np_
-         ip=this%p(i)%ind(1); jp=this%p(i)%ind(2); kp=this%p(i)%ind(3)
-         npic(ip,jp,kp)=npic(ip,jp,kp)+1
-      end do
-      do i=1,this%ng_
-         ip=this%g(i)%ind(1); jp=this%g(i)%ind(2); kp=this%g(i)%ind(3)
-         npic(ip,jp,kp)=npic(ip,jp,kp)+1
-      end do
+     ! Get maximum number of particle in cell
+     mymax_npic=maxval(npic); call MPI_ALLREDUCE(mymax_npic,max_npic,1,MPI_INTEGER,MPI_MAX,this%cfg%comm,ierr)
 
-      ! Get maximum number of particle in cell
-      mymax_npic=maxval(npic); call MPI_ALLREDUCE(mymax_npic,max_npic,1,MPI_INTEGER,MPI_MAX,this%cfg%comm,ierr)
+     ! Allocate pic map
+     allocate(ipic(1:max_npic,this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); ipic=0
 
-      ! Allocate pic map
-      allocate(ipic(1:max_npic,this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); ipic=0
+     ! Assemble pic map
+     npic=0
+     do i=1,this%np_
+        ip=this%p(i)%ind(1); jp=this%p(i)%ind(2); kp=this%p(i)%ind(3)
+        npic(ip,jp,kp)=npic(ip,jp,kp)+1
+        ipic(npic(ip,jp,kp),ip,jp,kp)=i
+     end do
+     do i=1,this%ng_
+        ip=this%g(i)%ind(1); jp=this%g(i)%ind(2); kp=this%g(i)%ind(3)
+        npic(ip,jp,kp)=npic(ip,jp,kp)+1
+        ipic(npic(ip,jp,kp),ip,jp,kp)=-i
+     end do
 
-      ! Assemble pic map
-      npic=0
-      do i=1,this%np_
-         ip=this%p(i)%ind(1); jp=this%p(i)%ind(2); kp=this%p(i)%ind(3)
-         npic(ip,jp,kp)=npic(ip,jp,kp)+1
-         ipic(npic(ip,jp,kp),ip,jp,kp)=i
-      end do
-      do i=1,this%ng_
-         ip=this%g(i)%ind(1); jp=this%g(i)%ind(2); kp=this%g(i)%ind(3)
-         npic(ip,jp,kp)=npic(ip,jp,kp)+1
-         ipic(npic(ip,jp,kp),ip,jp,kp)=-i
-      end do
+   end block pic_prep
 
-    end block pic_prep
+   ! Finally, calculate collision force
+   collision_force: block
+     use mpi_f08
+     use mathtools, only: Pi,normalize,cross_product
+     integer :: i1,i2,ii,jj,kk,nn,ierr
+     real(WP) :: d1,m1,d2,m2,d12,m12,buf
+     real(WP), dimension(3) :: r1,v1,w1,r2,v2,w2,v12,n12,f_n,t12,f_t
+     real(WP) :: k_n,eta_n,k_coeff,eta_coeff,k_coeff_w,eta_coeff_w,rnv,r_influ,delta_n,rtv
+     real(WP), parameter :: aclipnorm=1.0e-6_WP
+     real(WP), parameter :: acliptan=1.0e-9_WP
+     real(WP), parameter :: rcliptan=0.05_WP
 
-    ! Finally, calculate collision force
-    collision_force: block
-      use mpi_f08
-      use mathtools, only: Pi,normalize,cross_product
-      integer :: i1,i2,ii,jj,kk,nn,ierr
-      real(WP) :: d1,m1,d2,m2,d12,m12
-      real(WP), dimension(3) :: r1,v1,w1,r2,v2,w2,v12,n12,f_n,t12,f_t
-      real(WP) :: k_n,eta_n,k_coeff,eta_coeff,k_coeff_w,eta_coeff_w,rnv,r_influ,delta_n,rtv
-      real(WP), parameter :: aclipnorm=1.0e-6_WP
-      real(WP), parameter :: acliptan=1.0e-9_WP
-      real(WP), parameter :: rcliptan=0.05_WP
+     ! Reset collision counter
+     this%ncol=0
 
-      ! Reset collision counter
-      this%ncol=0
+     ! Precompute coefficients for k and eta
+     k_coeff=(Pi**2+log(this%e_n)**2)/this%tau_col**2
+     eta_coeff=-2.0_WP*log(this%e_n)/this%tau_col
+     k_coeff_w=(Pi**2+log(this%e_w)**2)/this%tau_col**2
+     eta_coeff_w=-2.0_WP*log(this%e_w)/this%tau_col
 
-      ! Precompute coefficients for k and eta
-      k_coeff=(Pi**2+log(this%e_n)**2)/this%tau_col**2
-      eta_coeff=-2.0_WP*log(this%e_n)/this%tau_col
-      k_coeff_w=(Pi**2+log(this%e_w)**2)/this%tau_col**2
-      eta_coeff_w=-2.0_WP*log(this%e_w)/this%tau_col
+     ! Loop over all local particles
+     collision: do i1=1,this%np_
 
-      ! Loop over all local particles
-      collision: do i1=1,this%np_
+        ! Cycle if id<=0
+        if (this%p(i1)%id.le.0) cycle collision
+        
+        ! Store particle data
+        r1=this%p(i1)%pos
+        v1=this%p(i1)%vel
+        w1=this%p(i1)%angVel
+        d1=this%p(i1)%d
+        m1=this%rho*Pi/6.0_WP*d1**3
 
-         ! Cycle if id<=0
-         if (this%p(i1)%id.le.0) cycle collision
-         
-         ! Store particle data
-         r1=this%p(i1)%pos
-         v1=this%p(i1)%vel
-         w1=this%p(i1)%angVel
-         d1=this%p(i1)%d
-         m1=this%rho*Pi/6.0_WP*d1**3
+        ! First collide with walls
+        d12=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=this%Wdist,bc='d')
+        n12=this%Wnorm(:,this%p(i1)%ind(1),this%p(i1)%ind(2),this%p(i1)%ind(3))
+        n12=-normalize(n12+[epsilon(1.0_WP),epsilon(1.0_WP),epsilon(1.0_WP)])
+        rnv=dot_product(v1,n12)
+        r_influ=min(2.0_WP*abs(rnv)*dt,0.2_WP*d1)
+        delta_n=min(0.5_WP*d1+r_influ-d12,this%clip_col*0.5_WP*d1)
 
-         ! First collide with walls
-         d12=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=this%Wdist,bc='d')
-         n12=this%Wnorm(:,this%p(i1)%ind(1),this%p(i1)%ind(2),this%p(i1)%ind(3))
-         n12=-normalize(n12+[epsilon(1.0_WP),epsilon(1.0_WP),epsilon(1.0_WP)])
-         rnv=dot_product(v1,n12)
-         r_influ=min(2.0_WP*abs(rnv)*dt,0.2_WP*d1)
-         delta_n=min(0.5_WP*d1+r_influ-d12,this%clip_col*0.5_WP*d1)
+        ! Assess if there is collision
+        if (delta_n.gt.0.0_WP) then
+           ! Normal collision
+           k_n=m1*k_coeff_w
+           eta_n=m1*eta_coeff_w
+           f_n=-k_n*delta_n*n12-eta_n*rnv*n12
+           ! Tangential collision
+           f_t=0.0_WP
+           if (this%mu_f.gt.0.0_WP) then
+              t12 = v1-rnv*n12+cross_product(0.5_WP*d1*w1,n12)
+              rtv = sqrt(sum(t12*t12))
+              if (rnv*dt/d1.gt.aclipnorm) then
+                 if (rtv/rnv.lt.rcliptan) rtv=0.0_WP
+              else
+                 if (rtv*dt/d1.lt.acliptan) rtv=0.0_WP
+              end if
+              if (rtv.gt.0.0_WP) f_t=-this%mu_f*sqrt(sum(f_n*f_n))*t12/rtv
+           end if
+           ! Calculate collision force
+           f_n=f_n/m1; f_t=f_t/m1
+           this%p(i1)%Acol=this%p(i1)%Acol+f_n+f_t
+           ! Calculate collision torque
+           this%p(i1)%Tcol=this%p(i1)%Tcol+cross_product(0.5_WP*d1*n12,f_t)
+        end if
 
-         ! Assess if there is collision
-         if (delta_n.gt.0.0_WP) then
-            ! Normal collision
-            k_n=m1*k_coeff_w
-            eta_n=m1*eta_coeff_w
-            f_n=-k_n*delta_n*n12-eta_n*rnv*n12
-            ! Tangential collision
-            f_t=0.0_WP
-            if (this%mu_f.gt.0.0_WP) then
-               t12 = v1-rnv*n12+cross_product(0.5_WP*d1*w1,n12)
-               rtv = sqrt(sum(t12*t12))
-               if (rnv*dt/d1.gt.aclipnorm) then
-                  if (rtv/rnv.lt.rcliptan) rtv=0.0_WP
-               else
-                  if (rtv*dt/d1.lt.acliptan) rtv=0.0_WP
-               end if
-               if (rtv.gt.0.0_WP) f_t=-this%mu_f*sqrt(sum(f_n*f_n))*t12/rtv
-            end if
-            ! Calculate collision force
-            f_n=f_n/m1; f_t=f_t/m1
-            this%p(i1)%Acol=this%p(i1)%Acol+f_n+f_t
-            ! Calculate collision torque
-            this%p(i1)%Tcol=this%p(i1)%Tcol+cross_product(0.5_WP*d1*n12,f_t)
-         end if
+        ! Collide with IB
+        if (present(Gib)) then
+           d12=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Gib,bc='n')
+           n12(1)=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Nxib,bc='n')
+           n12(2)=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Nyib,bc='n')
+           n12(3)=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Nzib,bc='n')
+           buf = sqrt(sum(n12*n12))+epsilon(1.0_WP)
+           n12 = -n12/buf
+           rnv=dot_product(v1,n12)
+           r_influ=min(2.0_WP*abs(rnv)*dt,0.2_WP*d1)
+           delta_n=min(0.5_WP*d1+r_influ-d12,this%clip_col*0.5_WP*d1)
 
-         ! Loop over nearest cells
-         do kk=this%p(i1)%ind(3)-1,this%p(i1)%ind(3)+1
-            do jj=this%p(i1)%ind(2)-1,this%p(i1)%ind(2)+1
-               do ii=this%p(i1)%ind(1)-1,this%p(i1)%ind(1)+1
+           ! Assess if there is collision
+           if (delta_n.gt.0.0_WP) then
+              ! Normal collision
+              k_n=m1*k_coeff_w
+              eta_n=m1*eta_coeff_w
+              f_n=-k_n*delta_n*n12-eta_n*rnv*n12
+              ! Tangential collision
+              f_t=0.0_WP
+              if (this%mu_f.gt.0.0_WP) then
+                 t12 = v1-rnv*n12+cross_product(0.5_WP*d1*w1,n12)
+                 rtv = sqrt(sum(t12*t12))
+                 if (rnv*dt/d1.gt.aclipnorm) then
+                    if (rtv/rnv.lt.rcliptan) rtv=0.0_WP
+                 else
+                    if (rtv*dt/d1.lt.acliptan) rtv=0.0_WP
+                 end if
+                 if (rtv.gt.0.0_WP) f_t=-this%mu_f*sqrt(sum(f_n*f_n))*t12/rtv
+              end if
+              ! Calculate collision force
+              f_n=f_n/m1; f_t=f_t/m1
+              this%p(i1)%Acol=this%p(i1)%Acol+f_n+f_t
+              ! Calculate collision torque
+              this%p(i1)%Tcol=this%p(i1)%Tcol+cross_product(0.5_WP*d1*n12,f_t)
+           end if
+        end if
 
-                  ! Loop over particles in that cell
-                  do nn=1,npic(ii,jj,kk)
+        ! Loop over nearest cells
+        do kk=this%p(i1)%ind(3)-1,this%p(i1)%ind(3)+1
+           do jj=this%p(i1)%ind(2)-1,this%p(i1)%ind(2)+1
+              do ii=this%p(i1)%ind(1)-1,this%p(i1)%ind(1)+1
 
-                     ! Get index of neighbor particle
-                     i2=ipic(nn,ii,jj,kk)
+                 ! Loop over particles in that cell
+                 do nn=1,npic(ii,jj,kk)
 
-                     ! Get relevant data from correct storage
-                     if (i2.gt.0) then
-                        r2=this%p(i2)%pos
-                        v2=this%p(i2)%vel
-                        w2=this%p(i2)%angVel
-                        d2=this%p(i2)%d
-                        m2=this%rho*Pi/6.0_WP*d2**3
-                     else if (i2.lt.0) then
-                        i2=-i2
-                        r2=this%g(i2)%pos
-                        v2=this%g(i2)%vel
-                        w2=this%g(i2)%angVel
-                        d2=this%g(i2)%d
-                        m2=this%rho*Pi/6.0_WP*d2**3
-                     end if
+                    ! Get index of neighbor particle
+                    i2=ipic(nn,ii,jj,kk)
 
-                     ! Compute relative information
-                     d12=norm2(r1-r2)
-                     if (d12.lt.10.0_WP*epsilon(d12)) cycle !< this should skip auto-collision
-                     n12=(r2-r1)/d12
-                     v12=v1-v2
-                     rnv=dot_product(v12,n12)
-                     r_influ=min(abs(rnv)*dt,0.1_WP*(d1+d2))
-                     delta_n=min(0.5_WP*(d1+d2)+r_influ-d12,this%clip_col*0.5_WP*(d1+d2))
+                    ! Get relevant data from correct storage
+                    if (i2.gt.0) then
+                       r2=this%p(i2)%pos
+                       v2=this%p(i2)%vel
+                       w2=this%p(i2)%angVel
+                       d2=this%p(i2)%d
+                       m2=this%rho*Pi/6.0_WP*d2**3
+                    else if (i2.lt.0) then
+                       i2=-i2
+                       r2=this%g(i2)%pos
+                       v2=this%g(i2)%vel
+                       w2=this%g(i2)%angVel
+                       d2=this%g(i2)%d
+                       m2=this%rho*Pi/6.0_WP*d2**3
+                    end if
 
-                     ! Assess if there is collision
-                     if (delta_n.gt.0.0_WP) then
-                        ! Normal collision
-                        m12=m1*m2/(m1+m2)
-                        k_n=m12*k_coeff
-                        eta_n=m12*eta_coeff
-                        f_n=-k_n*delta_n*n12-eta_n*rnv*n12
-                        ! Tangential collision
-                        f_t=0.0_WP
-                        if (this%mu_f.gt.0.0_WP) then
-                           t12 = v12-rnv*n12+cross_product(0.5_WP*(d1*w1+d2*w2),n12)
-                           rtv = sqrt(sum(t12*t12))
-                           if (rnv*dt*2.0_WP/(d1+d2).gt.aclipnorm) then
-                              if (rtv/rnv.lt.rcliptan) rtv=0.0_WP
-                           else
-                              if (rtv*dt*2.0_WP/(d1+d2).lt.acliptan) rtv=0.0_WP
-                           end if
-                           if (rtv.gt.0.0_WP) f_t=-this%mu_f*sqrt(sum(f_n*f_n))*t12/rtv
-                        end if
-                        ! Calculate collision force
-                        f_n=f_n/m1; f_t=f_t/m1
-                        this%p(i1)%Acol=this%p(i1)%Acol+f_n+f_t
-                        ! Calculate collision torque
-                        this%p(i1)%Tcol=this%p(i1)%Tcol+cross_product(0.5_WP*d1*n12,f_t)
-                        ! Add up the collisions
-                        this%ncol=this%ncol+1
-                     end if
-                     
-                  end do
+                    ! Compute relative information
+                    d12=norm2(r1-r2)
+                    if (d12.lt.10.0_WP*epsilon(d12)) cycle !< this should skip auto-collision
+                    n12=(r2-r1)/d12
+                    v12=v1-v2
+                    rnv=dot_product(v12,n12)
+                    r_influ=min(abs(rnv)*dt,0.1_WP*(d1+d2))
+                    delta_n=min(0.5_WP*(d1+d2)+r_influ-d12,this%clip_col*0.5_WP*(d1+d2))
 
-               end do
-            end do
-         end do
+                    ! Assess if there is collision
+                    if (delta_n.gt.0.0_WP) then
+                       ! Normal collision
+                       m12=m1*m2/(m1+m2)
+                       k_n=m12*k_coeff
+                       eta_n=m12*eta_coeff
+                       f_n=-k_n*delta_n*n12-eta_n*rnv*n12
+                       ! Tangential collision
+                       f_t=0.0_WP
+                       if (this%mu_f.gt.0.0_WP) then
+                          t12 = v12-rnv*n12+cross_product(0.5_WP*(d1*w1+d2*w2),n12)
+                          rtv = sqrt(sum(t12*t12))
+                          if (rnv*dt*2.0_WP/(d1+d2).gt.aclipnorm) then
+                             if (rtv/rnv.lt.rcliptan) rtv=0.0_WP
+                          else
+                             if (rtv*dt*2.0_WP/(d1+d2).lt.acliptan) rtv=0.0_WP
+                          end if
+                          if (rtv.gt.0.0_WP) f_t=-this%mu_f*sqrt(sum(f_n*f_n))*t12/rtv
+                       end if
+                       ! Calculate collision force
+                       f_n=f_n/m1; f_t=f_t/m1
+                       this%p(i1)%Acol=this%p(i1)%Acol+f_n+f_t
+                       ! Calculate collision torque
+                       this%p(i1)%Tcol=this%p(i1)%Tcol+cross_product(0.5_WP*d1*n12,f_t)
+                       ! Add up the collisions
+                       this%ncol=this%ncol+1
+                    end if
+                    
+                 end do
 
-         ! Deal with dimensionality
-         if (this%cfg%nx.eq.1) then
-            this%p(i1)%Acol(1)=0.0_WP
-            this%p(i1)%Tcol(2)=0.0_WP
-            this%p(i1)%Tcol(3)=0.0_WP
-         end if
-         if (this%cfg%ny.eq.1) then
-            this%p(i1)%Tcol(1)=0.0_WP
-            this%p(i1)%Acol(2)=0.0_WP
-            this%p(i1)%Tcol(3)=0.0_WP
-         end if
-         if (this%cfg%nz.eq.1) then
-            this%p(i1)%Tcol(1)=0.0_WP
-            this%p(i1)%Tcol(2)=0.0_WP
-            this%p(i1)%Acol(3)=0.0_WP
-         end if
+              end do
+           end do
+        end do
 
-      end do collision
+        ! Deal with dimensionality
+        if (this%cfg%nx.eq.1) then
+           this%p(i1)%Acol(1)=0.0_WP
+           this%p(i1)%Tcol(2)=0.0_WP
+           this%p(i1)%Tcol(3)=0.0_WP
+        end if
+        if (this%cfg%ny.eq.1) then
+           this%p(i1)%Tcol(1)=0.0_WP
+           this%p(i1)%Acol(2)=0.0_WP
+           this%p(i1)%Tcol(3)=0.0_WP
+        end if
+        if (this%cfg%nz.eq.1) then
+           this%p(i1)%Tcol(1)=0.0_WP
+           this%p(i1)%Tcol(2)=0.0_WP
+           this%p(i1)%Acol(3)=0.0_WP
+        end if
 
-      ! Determine total number of collisions
-      call MPI_ALLREDUCE(this%ncol,nn,1,MPI_INTEGER,MPI_SUM,this%cfg%comm,ierr); this%ncol=nn/2
+     end do collision
 
-    end block collision_force
+     ! Determine total number of collisions
+     call MPI_ALLREDUCE(this%ncol,nn,1,MPI_INTEGER,MPI_SUM,this%cfg%comm,ierr); this%ncol=nn/2
 
-  end subroutine collide
+   end block collision_force
 
+ end subroutine collide
+  
 
   !> Advance the particle equations by a specified time step dt
   !> p%id=0 => no coll, no solve
@@ -592,9 +636,9 @@ contains
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: W         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: rho       !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: visc      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_x  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_y  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_z  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: stress_x  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: stress_y  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: stress_z  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: vortx  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: vorty  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: vortz  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
@@ -606,6 +650,7 @@ contains
     integer :: i,j,k,ierr
     real(WP) :: mydt,dt_done,deng,Ip
     real(WP), dimension(3) :: acc,torque,dmom
+    real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_) :: sx,sy,sz
     type(part) :: myp,pold
 
     ! Zero out source term arrays
@@ -613,6 +658,23 @@ contains
     if (present(srcV)) srcV=0.0_WP
     if (present(srcW)) srcW=0.0_WP
     if (present(srcE)) srcE=0.0_WP
+    
+    ! Get fluid stress
+    if (present(stress_x)) then
+      sx=stress_x
+    else
+      sx=0.0_WP
+    end if
+    if (present(stress_y)) then
+      sy=stress_y
+    else
+      sy=0.0_WP
+    end if
+    if (present(stress_z)) then
+      sz=stress_z
+    else
+      sz=0.0_WP
+    end if
 
     ! Zero out number of particles removed
     this%np_out=0
@@ -633,13 +695,12 @@ contains
           ! Particle moment of inertia per unit mass
           Ip = 0.1_WP*myp%d**2
           ! Advance with Euler prediction
-          call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,stress_x=stress_x,stress_y=stress_y,stress_z=stress_z,p=myp,acc=acc,torque=torque,opt_dt=myp%dt)
-          !if (this%use_lift.and.present(vortx).and.present(vorty).and.present(vortz)) call this%get_lift(vortx,vorty,vortz,acc=acc)
+          call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,stress_x=sx,stress_y=sy,stress_z=sz,p=myp,acc=acc,torque=torque,opt_dt=myp%dt)
           myp%pos=pold%pos+0.5_WP*mydt*myp%vel
           myp%vel=pold%vel+0.5_WP*mydt*(acc+this%gravity+myp%Acol)
           myp%angVel=pold%angVel+0.5_WP*mydt*(torque+myp%Tcol)/Ip
           ! Correct with midpoint rule
-          call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,stress_x=stress_x,stress_y=stress_y,stress_z=stress_z,p=myp,acc=acc,torque=torque,opt_dt=myp%dt)
+          call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,stress_x=sx,stress_y=sy,stress_z=sz,p=myp,acc=acc,torque=torque,opt_dt=myp%dt)
           myp%pos=pold%pos+mydt*myp%vel
           myp%vel=pold%vel+mydt*(acc+this%gravity+myp%Acol)
           myp%angVel=pold%angVel+mydt*(torque+myp%Tcol)/Ip
@@ -746,8 +807,6 @@ contains
       fVF=1.0_WP-pVF
       ! Interpolate the fluid temperature to the particle location if present
       if (present(T)) fT=this%cfg%get_scalar(pos=p%pos,i0=p%ind(1),j0=p%ind(2),k0=p%ind(3),S=T,bc='n')
-      ! Interpolate the fluid vorticity to the particle location if needed
-      !if (this%use_lift) fvort=this%cfg%get_velocity(pos=p%pos,i0=p%ind(1),j0=p%ind(2),k0=p%ind(3),U=U,V=V,W=W)
     end block interpolate
 
     ! Compute acceleration due to drag
@@ -781,18 +840,18 @@ contains
     end block compute_drag
 
     ! Compute acceleration due to Saffman lift
-    compute_lift: block
-      use mathtools, only: Pi,cross_product
-      real(WP) :: omegag,Cl,Reg
-      if (this%use_lift) then
-         omegag=sqrt(sum(fvort**2))
-         if (omegag.gt.0.0_WP) then
-            Reg = p%d**2*omegag*frho/fvisc
-            Cl = 9.69_WP/Pi/p%d**2/this%rho*fvisc/omegag*sqrt(Reg)
-            acc=acc+Cl*cross_product(fvel-p%vel,fvort)
-         end if
-      end if
-    end block compute_lift
+    !compute_lift: block
+   !   use mathtools, only: Pi,cross_product
+   !   real(WP) :: omegag,Cl,Reg
+   !   if (this%use_lift) then
+   !      omegag=sqrt(sum(fvort**2))
+   !      if (omegag.gt.0.0_WP) then
+   !         Reg = p%d**2*omegag*frho/fvisc
+   !         Cl = 9.69_WP/Pi/p%d**2/this%rho*fvisc/omegag*sqrt(Reg)
+   !         acc=acc+Cl*cross_product(fvel-p%vel,fvort)
+   !      end if
+   !   end if
+    !end block compute_lift
 
     ! Compute fluid torque (assumed Stokes drag)
     compute_torque: block
@@ -819,7 +878,7 @@ contains
     ! Transfer particle volume
     do i=1,this%np_
        ! Skip inactive particle
-       if (this%p(i)%flag.eq.1) cycle
+       if (this%p(i)%flag.eq.1.or.this%p(i)%id.eq.0) cycle
        ! Transfer particle volume
        Vp=Pi/6.0_WP*this%p(i)%d**3
        call this%cfg%set_scalar(Sp=Vp,pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=this%VF,bc='n')
@@ -934,22 +993,23 @@ contains
 
   !> Inject particles from a prescribed location with given mass flowrate
   !> Requires injection parameters to be set beforehand
-  subroutine inject(this,dt)
+  subroutine inject(this,dt,avoid_overlap)
     use mpi_f08
     use parallel, only: MPI_REAL_WP
     use mathtools, only: Pi
     implicit none
     class(lpt), intent(inout) :: this
-    real(WP), intent(inout) :: dt              !< Timestep size over which to advance
-    real(WP) :: inj_min(3),inj_max(3)          !< Min/max extents of injection
-    real(WP) :: Mgoal,Madded,Mtmp,buf          !< Mass flow rate parameters
-    real(WP), save :: previous_error=0.0_WP    !< Store mass left over from previous timestep
-    integer(kind=8) :: maxid_,maxid            !< Keep track of maximum particle id
+    real(WP), intent(inout) :: dt                  !< Timestep size over which to advance
+    logical, intent(in), optional :: avoid_overlap !< Option to avoid overlap during injection
+    real(WP) :: inj_min(3),inj_max(3)              !< Min/max extents of injection
+    real(WP) :: Mgoal,Madded,Mtmp,buf              !< Mass flow rate parameters
+    real(WP), save :: previous_error=0.0_WP        !< Store mass left over from previous timestep
+    integer(kind=8) :: maxid_,maxid                !< Keep track of maximum particle id
     integer :: i,j,np0_,np2,np_tmp,count,ierr
     integer, dimension(:), allocatable :: nrecv
     type(part), dimension(:), allocatable :: p2
     type(MPI_Status) :: status
-    logical :: overlap
+    logical :: avoid_overlap_,overlap
     
     ! Initial number of particles
     np0_=this%np_
@@ -967,7 +1027,9 @@ contains
     call MPI_ALLREDUCE(maxid_,maxid,1,MPI_INTEGER8,MPI_MAX,this%cfg%comm,ierr)
 
     ! Communicate nearby particles to check for overlap
-    if (this%use_col) then
+    avoid_overlap_=.false.
+    if (present(avoid_overlap)) avoid_overlap_=avoid_overlap
+    if (avoid_overlap_) then
        allocate(nrecv(this%cfg%nproc))
        count=0
        inj_min(1)=this%cfg%x(this%cfg%imino)
@@ -1036,7 +1098,7 @@ contains
              this%p(count)%pos=get_position()
              overlap=.false.
              ! Check overlap with particles recently injected
-             if (this%use_col) then
+             if (avoid_overlap_) then
                 do j=1,np_tmp-1
                    if (norm2(this%p(count)%pos-this%p(j)%pos).lt.0.5_WP*(this%p(count)%d+this%p(j)%d)) overlap=.true.
                 end do
@@ -1139,13 +1201,14 @@ contains
   
   
   !> Calculate the CFL
-  subroutine get_cfl(this,dt,cfl)
+  subroutine get_cfl(this,dt,cflc,cfl)
     use mpi_f08,  only: MPI_ALLREDUCE,MPI_MAX
     use parallel, only: MPI_REAL_WP
     implicit none
     class(lpt), intent(inout) :: this
     real(WP), intent(in)  :: dt
-    real(WP), intent(out) :: cfl
+    real(WP), intent(out) :: cflc
+    real(WP), optional :: cfl
     integer :: i,ierr
     real(WP) :: my_CFLp_x,my_CFLp_y,my_CFLp_z,my_CFL_col
 
@@ -1165,15 +1228,15 @@ contains
     call MPI_ALLREDUCE(my_CFLp_z,this%CFLp_z,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
 
     ! Return the maximum convective CFL
-    cfl=max(this%CFLp_x,this%CFLp_y,this%CFLp_z)
-    if (this%use_col) then
-       my_CFL_col=10.0_WP*my_CFL_col*dt
-       call MPI_ALLREDUCE(my_CFL_col,this%CFL_col,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
-       cfl = max(cfl,this%CFL_col)
-    else
-       this%CFL_col=0.0_WP
-    end if
+    cflc=max(this%CFLp_x,this%CFLp_y,this%CFLp_z)
 
+    ! Compute collision CFL
+    my_CFL_col=10.0_WP*my_CFL_col*dt
+    call MPI_ALLREDUCE(my_CFL_col,this%CFL_col,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
+
+    ! If asked for, also return the maximum overall CFL
+    if (present(CFL)) cfl=max(cflc,this%CFL_col)
+    
   end subroutine get_cfl
 
 
@@ -1242,7 +1305,7 @@ contains
           end do
        end do
     end do
-    call MPI_ALLREDUCE(this%VFmean,buf,1,MPI_REAL_WP,MPI_SUM,this%cfg%comm,ierr); this%VFmean=buf/this%cfg%vol_total
+    call MPI_ALLREDUCE(this%VFmean,buf,1,MPI_REAL_WP,MPI_SUM,this%cfg%comm,ierr); this%VFmean=buf/this%cfg%fluid_vol
     call MPI_ALLREDUCE(this%VFmax ,buf,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr); this%VFmax =buf
     call MPI_ALLREDUCE(this%VFmin ,buf,1,MPI_REAL_WP,MPI_MIN,this%cfg%comm,ierr); this%VFmin =buf
 
@@ -1255,7 +1318,7 @@ contains
           end do
        end do
     end do
-    call MPI_ALLREDUCE(this%VFvar,buf,1,MPI_REAL_WP,MPI_SUM,this%cfg%comm,ierr); this%VFvar=buf/this%cfg%vol_total
+    call MPI_ALLREDUCE(this%VFvar,buf,1,MPI_REAL_WP,MPI_SUM,this%cfg%comm,ierr); this%VFvar=buf/this%cfg%fluid_vol
 
   end subroutine get_max
 
