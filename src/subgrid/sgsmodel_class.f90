@@ -443,7 +443,7 @@ contains
       do k=this%cfg%kmin_,this%cfg%kmax_
          do j=this%cfg%jmin_,this%cfg%jmax_
             do i=this%cfg%imin_,this%cfg%imax_
-               this%visc(i,j,k)=rho(i,j,k)*S_(i,j,k)*this%Cs_ref**2*this%delta(i,j,k)**2
+               this%visc(i,j,k)=rho(i,j,k)*S_(i,j,k)*(this%Cs_ref*this%delta(i,j,k))**2
             end do
          end do
       end do
