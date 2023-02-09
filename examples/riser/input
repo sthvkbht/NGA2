@@ -14,7 +14,7 @@ Max cfl number :	1
 Max time : 		10
 
 # Fluid properties
-Bulk velocity     : 0.2
+Bulk velocity     : 0.272
 Dynamic viscosity : 1.8e-5
 Density           : 1.2
 Gravity           : -9.81 0 0
@@ -36,7 +36,7 @@ Implicit tolerance :    1e-6
 Implicit iteration :    100
 
 # Ensight output
-Ensight output period : 100e-5
+Ensight output period : 200e-5
 
 # Postprocessing output
 Postproc output period : 200e-5

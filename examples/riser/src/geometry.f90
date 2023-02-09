@@ -93,6 +93,7 @@ contains
          end do
       end do
       call cfg%sync(cfg%VF)
+      call cfg%calc_fluid_vol()
     end block create_walls
 
 
