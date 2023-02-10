@@ -9,10 +9,10 @@ module ensight_class
    use partmesh_class, only: partmesh
    implicit none
    private
-   
+
    ! Expose type/constructor/methods
    public :: ensight
-   
+
    ! List types
    type :: scl !< Scalar field
       type(scl), pointer :: next
@@ -37,7 +37,7 @@ module ensight_class
       character(len=str_medium) :: name
       type(partmesh), pointer :: ptr
    end type prt
-   
+
    !> Ensight object definition as list of pointers to arrays
    type :: ensight
       ! An ensight object has a name
@@ -60,21 +60,19 @@ module ensight_class
       procedure :: write_part                                         !< Write out particle mesh file
       generic :: add_scalar=>add_rscalar,add_iscalar                  !< Add a new scalar field
       procedure, private :: add_rscalar                               !< Add a new real(WP) scalar field
-      procedure, private :: add_iscalar                               !< Add a new integer  scalar field
+      procedure, private :: add_iscalar                               !< Add a new integer scalar field
       procedure :: add_vector                                         !< Add a new vector field
       procedure :: add_surface                                        !< Add a new surface mesh
       procedure :: add_particle                                       !< Add a new particle mesh
    end type ensight
-   
-   
+
    !> Declare ensight constructor
    interface ensight
       procedure construct_ensight
    end interface ensight
-   
-   
+
 contains
-   
+
    !> Constructor for an empty ensight object
    function construct_ensight(cfg,name) result(self)
       use messager, only: die
@@ -87,25 +85,25 @@ contains
       character(len=str_medium) :: line
       integer :: iunit,ierr,stat
       logical :: file_is_there,found
-      
+
       ! Link to config
       self%cfg=>cfg
-      
+
       ! Store casename
       self%name=trim(adjustl(name))
-      
+
       ! Start with no time stamps
       self%ntime=0
-      
+
       ! Create directory
       if (self%cfg%amRoot) then
          call execute_command_line('mkdir -p ensight')
          call execute_command_line('mkdir -p ensight/'//trim(self%name))
       end if
-      
+
       ! Write out the geometry
       call self%write_geom(cfg=self%cfg,name='geometry')
-      
+
       ! Empty pointer to lists for now
       self%first_scl=>NULL()
       self%first_vct=>NULL()
@@ -144,17 +142,17 @@ contains
             close(iunit)
          end if
       end if
-      
+
       ! Communicate to all processors
       call MPI_BCAST(self%ntime,1,MPI_INTEGER,0,self%cfg%comm,ierr)
       if (self%ntime.gt.0) then
          if (.not.self%cfg%amRoot) allocate(self%time(self%ntime))
          call MPI_BCAST(self%time,self%ntime,MPI_REAL_WP,0,self%cfg%comm,ierr)
       end if
-      
+
    end function construct_ensight
-   
-   
+
+
    !> Add a real scalar field for output
    subroutine add_rscalar(this,name,scalar)
       implicit none
@@ -174,8 +172,8 @@ contains
       ! Also create the corresponding directory
       if (this%cfg%amRoot) call execute_command_line('mkdir -p ensight/'//trim(this%name)//'/'//trim(new_scl%name))
    end subroutine add_rscalar
-   
-   
+
+
    !> Add an integer scalar field for output
    subroutine add_iscalar(this,name,scalar)
       implicit none
@@ -195,8 +193,8 @@ contains
       ! Also create the corresponding directory
       if (this%cfg%amRoot) call execute_command_line('mkdir -p ensight/'//trim(this%name)//'/'//trim(new_scl%name))
    end subroutine add_iscalar
-   
-   
+
+
    !> Add a vector field for output
    subroutine add_vector(this,name,vectx,vecty,vectz)
       implicit none
@@ -219,8 +217,8 @@ contains
       ! Also create the corresponding directory
       if (this%cfg%amRoot) call execute_command_line('mkdir -p ensight/'//trim(this%name)//'/'//trim(new_vct%name))
    end subroutine add_vector
-   
-   
+
+
    !> Add a surface mesh for output
    subroutine add_surface(this,name,surface)
       implicit none
@@ -272,6 +270,7 @@ contains
       real(WP), intent(in) :: time
       character(len=str_medium) :: filename
       integer :: iunit,ierr,n,i
+      character(len=8) :: ierr_s
       integer :: ibuff
       character(len=80) :: cbuff
       type(MPI_File) :: ifile
@@ -317,7 +316,10 @@ contains
          if (this%cfg%amRoot) then
             ! Open the file
             open(newunit=iunit,file=trim(filename),form='unformatted',status='replace',access='stream',iostat=ierr)
-            if (ierr.ne.0) call die('[ensight write data] Could not open file '//trim(filename))
+            if (ierr.ne.0) then
+              write(ierr_s, "(I4)") ierr
+              call die('[ensight write data] Could not open file '//trim(filename)//'(error '//ierr_s//')')
+            end if
             ! Write the header
             cbuff=trim(my_scl%name); write(iunit) cbuff
             cbuff='part'           ; write(iunit) cbuff
@@ -432,7 +434,7 @@ contains
       
       ! Write all the variable information
       write(iunit,'(a)') 'VARIABLE'
-      write(iunit,'(a)') 'scalar per element: wall geometry.wall'
+      write(iunit,'(a)') 'scalar per element: fvf geometry.fvf'
       my_scl=>this%first_scl
       do while (associated(my_scl))
          write(iunit,'(a)') 'scalar per element: 1 '//trim(my_scl%name)//' '//trim(my_scl%name)//'/'//trim(my_scl%name)//'.******'
@@ -517,13 +519,13 @@ contains
          
       end if
       
-      ! Root process starts writing the file header for wall data
+      ! Root process starts writing the file header for VF data
       if (cfg%amRoot) then
          ! Open the file
-         open(newunit=iunit,file='ensight/'//trim(this%name)//'/'//trim(name)//'.wall',form='unformatted',status='replace',access='stream',iostat=ierr)
-         if (ierr.ne.0) call die('[ensight write data] Could not open file: '//'ensight/'//trim(this%name)//'/'//trim(name)//'.wall')
+         open(newunit=iunit,file='ensight/'//trim(this%name)//'/'//trim(name)//'.fvf',form='unformatted',status='replace',access='stream',iostat=ierr)
+         if (ierr.ne.0) call die('[ensight write data] Could not open file: '//'ensight/'//trim(this%name)//'/'//trim(name)//'.fvf')
          ! Write the header
-         cbuff='wall'           ; write(iunit) cbuff
+         cbuff='fvf'            ; write(iunit) cbuff
          cbuff='part'           ; write(iunit) cbuff
          ibuff=1                ; write(iunit) ibuff
          cbuff='block'          ; write(iunit) cbuff
@@ -534,9 +536,9 @@ contains
       ! Prepare the SP buffer
       allocate(spbuff(cfg%imin_:cfg%imax_,cfg%jmin_:cfg%jmax_,cfg%kmin_:cfg%kmax_))
       
-      ! Now parallel-write the wall data
-      call MPI_FILE_OPEN(cfg%comm,'ensight/'//trim(this%name)//'/'//trim(name)//'.wall',IOR(MPI_MODE_WRONLY,MPI_MODE_APPEND),info_mpiio,ifile,ierr)
-      if (ierr.ne.0) call die('[ensight write geom] Problem encountered while parallel writing wall data file: '//'ensight/'//trim(this%name)//'/'//trim(name)//'.wall')
+      ! Now parallel-write the VF data
+      call MPI_FILE_OPEN(cfg%comm,'ensight/'//trim(this%name)//'/'//trim(name)//'.fvf',IOR(MPI_MODE_WRONLY,MPI_MODE_APPEND),info_mpiio,ifile,ierr)
+      if (ierr.ne.0) call die('[ensight write geom] Problem encountered while parallel writing fvf data file: '//'ensight/'//trim(this%name)//'/'//trim(name)//'.fvf')
       call MPI_FILE_GET_POSITION(ifile,disp,ierr)
       call MPI_FILE_SET_VIEW(ifile,disp,MPI_REAL_SP,cfg%SPview,'native',info_mpiio,ierr)
       spbuff(cfg%imin_:cfg%imax_,cfg%jmin_:cfg%jmax_,cfg%kmin_:cfg%kmax_)=real(cfg%VF(cfg%imin_:cfg%imax_,cfg%jmin_:cfg%jmax_,cfg%kmin_:cfg%kmax_),SP)

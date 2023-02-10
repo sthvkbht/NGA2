@@ -88,7 +88,7 @@ module pgrid_class
       procedure, private :: pgrid_isync,pgrid_isync_no                          !< Commmunicate inner and periodic boundaries for integer
       procedure, private :: pgrid_rsync,pgrid_rsync_no                          !< Commmunicate inner and periodic boundaries for real(WP)
       procedure, private :: pgrid_rsync_array                                   !< Commmunicate inner and periodic boundaries for arrays of real(WP) of the form (:,i,j,k)
-	  procedure, private :: pgrid_rsync_tensor                                  !< Commmunicate inner and periodic boundaries for tensors of real(WP) of the form (:,:,i,j,k)
+      procedure, private :: pgrid_rsync_tensor                                  !< Commmunicate inner and periodic boundaries for tensors of real(WP) of the form (:,:,i,j,k)
       generic :: syncsum=>pgrid_rsyncsum                                        !< Summation across inner and periodic boundaries - generic
       procedure, private :: pgrid_rsyncsum                                      !< Summation inner and periodic boundaries for real(WP)
       procedure :: get_rank                                                     !< Function that returns rank of processor that contains provided indices
