@@ -4,10 +4,10 @@ NGA_HOME ?= ../..
 # Compilation parameters
 PRECISION = DOUBLE
 USE_MPI   = TRUE
-USE_FFTW  = TRUE
-USE_P3DFFT= TRUE
 USE_HYPRE = TRUE
 USE_LAPACK= TRUE
+USE_IRL   = FALSE
+USE_FFTW  = TRUE
 PROFILE   = FALSE
 DEBUG     = FALSE
 COMP      = gnu
@@ -23,16 +23,18 @@ include $(Upack)
 INCLUDE_LOCATIONS += $(Ulocs)
 VPATH_LOCATIONS   += $(Ulocs)
 
-# External libraries are defined in .profile/.bashrc/.zshrc, but could be defined here as well
-HYPRE_DIR = /Users/maxzog/hypre/
-LAPACK_DIR= /usr/local/Cellar/lapack/3.11/
-FFTW_DIR  = /usr/local/Cellar/fftw/3.3.10_1/
+# Define external libraries - this can also be in .profile
+#HDF5_DIR = /Users/desjardi/Builds/hdf5
+LAPACK_DIR= /usr/local/Cellar/lapack/3.11
+HYPRE_DIR = /Users/maxzog/builds/hypre/src/hypre
+FFTW_DIR  = /usr/local/Cellar/fftw/3.3.10_1
+#IRL_DIR   = /Users/maxzog/IRL/
 
 # NGA compilation definitions
 include $(NGA_HOME)/tools/GNUMake/Make.defs
 
 # Include NGA base code
-Bdirs   := particles core constant_density subgrid data solver config grid libraries
+Bdirs   := particles constant_density core data solver config grid libraries
 Bpack   += $(foreach dir, $(Bdirs), $(NGA_HOME)/src/$(dir)/Make.package)
 include $(Bpack)
 
