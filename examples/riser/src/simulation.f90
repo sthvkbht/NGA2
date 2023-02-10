@@ -650,19 +650,14 @@ contains
           ! Apply direct forcing to enforce BC at the pipe walls
           ibm_correction: block
             integer :: i,j,k
-            real(WP) :: VFx,VFy,VFz,RHOx,RHOy,RHOz
+            real(WP) :: VFx,VFy,VFz
             do k=fs%cfg%kmin_,fs%cfg%kmax_
                do j=fs%cfg%jmin_,fs%cfg%jmax_
                   do i=fs%cfg%imin_,fs%cfg%imax_
-                     VFx=get_VF(i,j,k,'U')
-                     VFy=get_VF(i,j,k,'V')
-                     VFz=get_VF(i,j,k,'W')
-                     RHOx=sum(fs%itpr_x(:,i,j,k)*fs%rho(i-1:i,j,k))
-                     RHOy=sum(fs%itpr_y(:,i,j,k)*fs%rho(i,j-1:j,k))
-                     RHOz=sum(fs%itpr_z(:,i,j,k)*fs%rho(i,j,k-1:k))
-                     resU(i,j,k)=resU(i,j,k)-(1.0_WP-VFx)*RHOx*fs%U(i,j,k)
-                     resV(i,j,k)=resV(i,j,k)-(1.0_WP-VFy)*RHOy*fs%V(i,j,k)
-                     resW(i,j,k)=resW(i,j,k)-(1.0_WP-VFz)*RHOz*fs%W(i,j,k)
+                     VFx=get_VF(i,j,k,'U'); VFy=get_VF(i,j,k,'V'); VFz=get_VF(i,j,k,'W')
+                     resU(i,j,k)=resU(i,j,k)-(1.0_WP-VFx)*sum(fs%itpr_x(:,i,j,k)*fs%rho(i-1:i,j,k))*fs%U(i,j,k)
+                     resV(i,j,k)=resV(i,j,k)-(1.0_WP-VFy)*sum(fs%itpr_y(:,i,j,k)*fs%rho(i,j-1:j,k))*fs%V(i,j,k)
+                     resW(i,j,k)=resW(i,j,k)-(1.0_WP-VFz)*sum(fs%itpr_z(:,i,j,k)*fs%rho(i,j,k-1:k))*fs%W(i,j,k)
                   end do
                end do
             end do
