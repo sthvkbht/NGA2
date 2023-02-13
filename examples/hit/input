@@ -6,10 +6,8 @@ Lx :	6.2832
 nx :	64
 
 # Fluid properties
-Dynamic viscosity :    0.002
+Dynamic viscosity :    0.1
 Density :              1
-Initial rms :          10
-Eddy turnover time :   0.1
 
 # Steadt-state (forcing) parameters
 Force to maximum Re_lambda : .true.
