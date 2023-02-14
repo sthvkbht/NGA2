@@ -2,6 +2,7 @@
 module simulation
    use precision,         only: WP
    use geometry,          only: cfg
+   use hypre_uns_class,   only: hypre_uns
    use lowmach_class,     only: lowmach
    use vdscalar_class,    only: vdscalar
    use timetracker_class, only: timetracker
@@ -12,6 +13,9 @@ module simulation
    private
    
    !> Single low Mach flow solver and scalar solver and corresponding time tracker
+   type(hypre_uns),   public :: ps
+   type(hypre_uns),   public :: vs
+   type(hypre_uns),   public :: ss
    type(lowmach),     public :: fs
    type(vdscalar),    public :: sc
    type(timetracker), public :: time
@@ -108,11 +112,13 @@ contains
    subroutine get_rho()
       implicit none
       integer :: i,j,k
+      real(WP) :: Z
       ! Calculate density
       do k=sc%cfg%kmino_,sc%cfg%kmaxo_
          do j=sc%cfg%jmino_,sc%cfg%jmaxo_
             do i=sc%cfg%imino_,sc%cfg%imaxo_
-               sc%rho(i,j,k)=1.0_WP!rho_jet*rho_cof/((1.0_WP-sc%SC(i,j,k))*rho_jet+sc%SC(i,j,k)*rho_cof)
+               Z=min(max(sc%SC(i,j,k),0.0_WP),1.0_WP)
+               sc%rho(i,j,k)=rho_jet*rho_cof/((1.0_WP-Z)*rho_jet+Z*rho_cof)
             end do
          end do
       end do
@@ -135,50 +141,53 @@ contains
       
       ! Create an incompressible flow solver with bconds
       create_solver: block
-         use ils_class,     only: pcg_amg
-         use lowmach_class, only: dirichlet,clipped_neumann
-         real(WP) :: visc
-         ! Create flow solver
-         fs=lowmach(cfg=cfg,name='Variable density low Mach NS')
-         ! Assign constant viscosity
-         call param_read('Dynamic viscosity',visc); fs%visc=visc
-         ! Define jet and coflow boundary conditions
-         call fs%add_bcond(name='jet'   ,type=dirichlet,face='x',dir=-1,canCorrect=.false.,locator=jet   )
-         call fs%add_bcond(name='coflow',type=dirichlet,face='x',dir=-1,canCorrect=.false.,locator=coflow)
-         ! Outflow on the right
-         call fs%add_bcond(name='outflow',type=clipped_neumann,face='x',dir=+1,canCorrect=.true.,locator=right_boundary)
-         ! Configure pressure solver
-         call param_read('Pressure iteration',fs%psolv%maxit)
-         call param_read('Pressure tolerance',fs%psolv%rcvg)
-         ! Configure implicit velocity solver
-         call param_read('Implicit iteration',fs%implicit%maxit)
-         call param_read('Implicit tolerance',fs%implicit%rcvg)
-         ! Setup the solver
-         call fs%setup(pressure_ils=pcg_amg,implicit_ils=pcg_amg)
+        use hypre_uns_class, only: pcg_amg
+        use lowmach_class, only: dirichlet,clipped_neumann
+        real(WP) :: visc
+        ! Create flow solver
+        fs=lowmach(cfg=cfg,name='Variable density low Mach NS')
+        ! Assign constant viscosity
+        call param_read('Dynamic viscosity',visc); fs%visc=visc
+        ! Define jet and coflow boundary conditions
+        call fs%add_bcond(name='jet'   ,type=dirichlet,face='x',dir=-1,canCorrect=.false.,locator=jet   )
+        call fs%add_bcond(name='coflow',type=dirichlet,face='x',dir=-1,canCorrect=.false.,locator=coflow)
+        ! Outflow on the right
+        call fs%add_bcond(name='outflow',type=clipped_neumann,face='x',dir=+1,canCorrect=.true.,locator=right_boundary)
+        ! Configure pressure solver
+        ps=hypre_uns(cfg=cfg,name='Pressure',method=pcg_amg,nst=7)
+        call param_read('Pressure iteration',ps%maxit)
+        call param_read('Pressure tolerance',ps%rcvg)
+        ! Configure implicit velocity solver
+        vs=hypre_uns(cfg=cfg,name='Velocity',method=pcg_amg,nst=7)
+        call param_read('Implicit iteration',vs%maxit)
+        call param_read('Implicit tolerance',vs%rcvg)
+        ! Setup the solver
+        call fs%setup(pressure_solver=ps,implicit_solver=vs)
       end block create_solver
-      
-      
+
+
       ! Create a scalar solver
       create_scalar: block
-         use ils_class,      only: pcg_amg
-         use vdscalar_class, only: dirichlet,neumann,quick
-         real(WP) :: diffusivity
-         ! Create scalar solver
-         sc=vdscalar(cfg=cfg,scheme=quick,name='MixFrac')
-         ! Define jet and coflow boundary conditions
-         call sc%add_bcond(name='jet'   ,type=dirichlet,locator=jetsc   )
-         call sc%add_bcond(name='coflow',type=dirichlet,locator=coflowsc)
-         ! Outflow on the right
-         call sc%add_bcond(name='outflow',type=neumann,locator=right_boundary,dir='+x')
-         ! Assign constant diffusivity
-         call param_read('Dynamic diffusivity',diffusivity)
-         sc%diff=diffusivity
-         ! Configure implicit scalar solver
-         sc%implicit%maxit=fs%implicit%maxit; sc%implicit%rcvg=fs%implicit%rcvg
-         ! Setup the solver
-         call sc%setup(implicit_ils=pcg_amg)
+        use hypre_uns_class, only: pcg_amg
+        use vdscalar_class, only: dirichlet,neumann,quick
+        real(WP) :: diffusivity
+        ! Create scalar solver
+        sc=vdscalar(cfg=cfg,scheme=quick,name='MixFrac')
+        ! Define jet and coflow boundary conditions
+        call sc%add_bcond(name='jet'   ,type=dirichlet,locator=jetsc   )
+        call sc%add_bcond(name='coflow',type=dirichlet,locator=coflowsc)
+        ! Outflow on the right
+        call sc%add_bcond(name='outflow',type=neumann,locator=right_boundary,dir='+x')
+        ! Assign constant diffusivity
+        call param_read('Dynamic diffusivity',diffusivity)
+        sc%diff=diffusivity
+        ! Configure implicit scalar solver
+        ss=hypre_uns(cfg=cfg,name='Scalar',method=pcg_amg,nst=13)
+        ss%maxit=vs%maxit; ss%rcvg=vs%rcvg
+        ! Setup the solver
+        call sc%setup(implicit_solver=ss)
       end block create_scalar
-      
+
       
       ! Allocate work arrays
       allocate_work_arrays: block
@@ -357,31 +366,48 @@ contains
             
             ! ============= SCALAR SOLVER =======================
             ! Build mid-time scalar
-            !sc%SC=0.5_WP*(sc%SC+sc%SCold)
+            sc%SC=0.5_WP*(sc%SC+sc%SCold)
             
             ! Explicit calculation of drhoSC/dt from scalar equation
-            !call sc%get_drhoSCdt(resSC,fs%rhoU,fs%rhoV,fs%rhoW)
+            call sc%get_drhoSCdt(resSC,fs%rhoU,fs%rhoV,fs%rhoW)
             
             ! Assemble explicit residual
-            !resSC=time%dt*resSC-(2.0_WP*sc%rho*sc%SC-(sc%rho+sc%rhoold)*sc%SCold)
+            resSC=time%dt*resSC-(2.0_WP*sc%rho*sc%SC-(sc%rho+sc%rhoold)*sc%SCold)
             
             ! Form implicit residual
-            !call sc%solve_implicit(time%dt,resSC,fs%rhoU,fs%rhoV,fs%rhoW)
+            call sc%solve_implicit(time%dt,resSC,fs%rhoU,fs%rhoV,fs%rhoW)
             
             ! Apply this residual
-            !sc%SC=2.0_WP*sc%SC-sc%SCold+resSC
+            sc%SC=2.0_WP*sc%SC-sc%SCold+resSC
             
             ! Apply other boundary conditions on the resulting field
-            !call sc%apply_bcond(time%t,time%dt)
+            call sc%apply_bcond(time%t,time%dt)
+            
+            dirichlet_scalar: block
+              use vdscalar_class, only: bcond
+              type(bcond), pointer :: mybc
+              integer :: n,i,j,k
+              call sc%get_bcond('jet',mybc)
+              do n=1,mybc%itr%no_
+                 i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
+                 sc%SC(i,j,k)=1.0_WP
+              end do
+              call sc%get_bcond('coflow',mybc)
+              do n=1,mybc%itr%no_
+                 i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
+                 sc%SC(i,j,k)=0.0_WP
+              end do
+            end block dirichlet_scalar
+            
             ! ===================================================
             
             ! ============ UPDATE PROPERTIES ====================
             ! Backup rhoSC
-            !resSC=sc%rho*sc%SC
+            resSC=sc%rho*sc%SC
             ! Update density
-            !call get_rho()
+            call get_rho()
             ! Rescale scalar for conservation
-            !sc%SC=resSC/sc%rho
+            sc%SC=resSC/sc%rho
             ! UPDATE THE VISCOSITY
             ! UPDATE THE DIFFUSIVITY
             ! ===================================================
@@ -416,10 +442,28 @@ contains
             call fs%apply_bcond(time%tmid,time%dtmid)
             call fs%rho_multiply()
             call fs%apply_bcond(time%tmid,time%dtmid)
-            
+
+            ! Reset Dirichlet BCs
+            dirichlet_velocity: block
+              use lowmach_class, only: bcond
+              type(bcond), pointer :: mybc
+              integer :: n,i,j,k
+              call fs%get_bcond('jet',mybc)
+              do n=1,mybc%itr%no_
+                 i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
+                 fs%U(i,j,k)=U_jet
+              end do
+              call fs%get_bcond('coflow',mybc)
+              do n=1,mybc%itr%no_
+                 i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
+                 fs%U(i,j,k)=U_cof
+              end do
+              call fs%rho_multiply()
+            end block dirichlet_velocity
+
             ! Solve Poisson equation
-            !call sc%get_drhodt(dt=time%dt,drhodt=resSC)
-            resSC=0.0_WP
+            call sc%get_drhodt(dt=time%dt,drhodt=resSC)
+            !resSC=0.0_WP
             call fs%correct_mfr(drhodt=resSC)
             call fs%get_div(drhodt=resSC)
             fs%psolv%rhs=-fs%cfg%vol*fs%div/time%dtmid
