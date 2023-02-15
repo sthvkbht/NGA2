@@ -50,7 +50,28 @@ module simulation
 
 contains
 
+  !> Function that localizes the left (x-) of the domain
+   function left_of_domain(pg,i,j,k) result(isIn)
+     use pgrid_class, only: pgrid
+     implicit none
+     class(pgrid), intent(in) :: pg
+     integer, intent(in) :: i,j,k
+     logical :: isIn
+     isIn=.false.
+     if (i.eq.pg%imin) isIn=.true.
+   end function left_of_domain
 
+   !> Function that localizes the right (x+) of the domain
+   function right_of_domain(pg,i,j,k) result(isIn)
+     use pgrid_class, only: pgrid
+     implicit none
+     class(pgrid), intent(in) :: pg
+     integer, intent(in) :: i,j,k
+     logical :: isIn
+     isIn=.false.
+     if (i.eq.pg%imax+1) isIn=.true.
+   end function right_of_domain
+  
    !> Function that localizes the bottom (y-) of the domain
    function bottom_of_domain(pg,i,j,k) result(isIn)
      use pgrid_class, only: pgrid
@@ -110,6 +131,8 @@ contains
       ! Create flow solver
       fs=lowmach(cfg=cfg,name='Variable density low Mach NS')
       ! Define boundary conditions
+      call fs%add_bcond(name='left',type=dirichlet,locator=left_of_domain,face='x',dir=-1,canCorrect=.false.)
+      call fs%add_bcond(name='right',type=dirichlet,locator=right_of_domain,face='x',dir=+1,canCorrect=.false.)
       call fs%add_bcond(name='bottom',type=dirichlet,locator=bottom_of_domain,face='y',dir=-1,canCorrect=.false.)
       call fs%add_bcond(name='top',type=neumann,locator=top_of_domain,face='y',dir=+1,canCorrect=.true. )
       ! Assign constant density
@@ -180,7 +203,7 @@ contains
             ! Give position (avoid overlap)
             overlap=.true.
             do while(overlap)
-               lp%p(i)%pos=[random_uniform(0.0_WP,Wbed),&
+               lp%p(i)%pos=[random_uniform(0.5_WP*dp,Wbed),&
                     &            random_uniform(lp%cfg%y(lp%cfg%jmin)+0.5_WP*dp,lp%cfg%y(lp%cfg%jmax+1)-0.5_WP*dp),&
                     &            random_uniform(lp%cfg%z(lp%cfg%kmin),lp%cfg%z(lp%cfg%kmax+1))]
                if (lp%cfg%nz.eq.1) lp%p(i)%pos(3)=lp%cfg%zm(lp%cfg%kmin_)
@@ -253,7 +276,19 @@ contains
       integer :: n,i,j,k
       ! Zero initial field
       fs%U=0.0_WP; fs%V=0.0_WP; fs%W=0.0_WP
-      ! Set inflow velocity/momentum
+      ! Set no-slip walls
+      call fs%get_bcond('left',mybc)
+      do n=1,mybc%itr%no_
+         i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
+         fs%rhoU(i,j,k)=0.0_WP
+         fs%U(i,j,k)   =0.0_WP
+      end do
+      call fs%get_bcond('right',mybc)
+      do n=1,mybc%itr%no_
+         i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
+         fs%rhoU(i,j,k)=0.0_WP
+         fs%U(i,j,k)   =0.0_WP
+      end do
       call fs%get_bcond('bottom',mybc)
       do n=1,mybc%itr%no_
          i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
