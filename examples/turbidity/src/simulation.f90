@@ -38,7 +38,11 @@ module simulation
   real(WP), dimension(:,:,:), allocatable :: resU,resV,resW
   real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi,rho0,dRHOdt
   real(WP), dimension(:,:,:), allocatable :: srcUlp,srcVlp,srcWlp
+  real(WP), dimension(:,:,:), allocatable :: tmp1,tmp2,tmp3
   real(WP) :: visc,rho,inlet_velocity
+
+  !> Max timestep size for LPT
+  real(WP) :: lp_dt
   
   !> Wallclock time for monitoring
   type :: timer
@@ -168,6 +172,9 @@ contains
       allocate(Vi      (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(Wi      (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(rho0    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+      allocate(tmp1    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+      allocate(tmp2    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+      allocate(tmp3    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
     end block allocate_work_arrays
 
 
@@ -188,6 +195,7 @@ contains
       call param_read('Particle diameter',dp)
       ! Set filter scale to 3.5*dx
       lp%filter_width=3.5_WP*cfg%min_meshsize
+      call param_read('LPT timestep size',lp_dt,default=huge(1.0_WP))
 
       ! Root process initializes particles uniformly
       call param_read('Bed width',Wbed)
@@ -280,23 +288,17 @@ contains
       call fs%get_bcond('left',mybc)
       do n=1,mybc%itr%no_
          i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-         fs%U(i,j,k)=0.0_WP
-         fs%V(i,j,k)=0.0_WP
-         fs%W(i,j,k)=0.0_WP
+         fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
       end do
       call fs%get_bcond('right',mybc)
       do n=1,mybc%itr%no_
          i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-         fs%U(i,j,k)=0.0_WP
-         fs%V(i,j,k)=0.0_WP
-         fs%W(i,j,k)=0.0_WP
+         fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
       end do
       call fs%get_bcond('bottom',mybc)
       do n=1,mybc%itr%no_
          i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-         fs%U(i,j,k)=0.0_WP
-         fs%V(i,j,k)=0.0_WP
-         fs%W(i,j,k)=0.0_WP
+         fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
       end do
       ! Set density from particle volume fraction and store initial density
       fs%rho=rho*(1.0_WP-lp%VF)
@@ -340,8 +342,8 @@ contains
     create_monitor: block
       ! Prepare some info about fields
       real(WP) :: cfl
-      call lp%get_cfl(time%dt,cflc=time%cfl,cfl=time%cfl)
-      call fs%get_cfl(time%dt,cfl); time%cfl=max(time%cfl,cfl)
+      call lp%get_cfl(time%dt,cflc=time%cfl)
+      call fs%get_cfl(time%dt,cfl,cfl); time%cfl=max(time%cfl,cfl)
       call fs%get_max()
       call lp%get_max()
       ! Create simulation monitor
@@ -421,8 +423,8 @@ contains
        wt_total%time_in=parallel_time()
 
        ! Increment time
-       call lp%get_cfl(time%dt,cflc=time%cfl,cfl=time%cfl)
-       call fs%get_cfl(time%dt,cfl); time%cfl=max(time%cfl,cfl)
+       call lp%get_cfl(time%dt,cflc=time%cfl)
+       call fs%get_cfl(time%dt,cfl,cfl); time%cfl=max(time%cfl,cfl)
        call time%adjust_dt()
        call time%increment()
 
@@ -432,28 +434,43 @@ contains
        fs%Vold=fs%V; fs%rhoVold=fs%rhoV
        fs%Wold=fs%W; fs%rhoWold=fs%rhoW
 
-       ! Get fluid stress
        wt_lpt%time_in=parallel_time()
-       call fs%get_div_stress(resU,resV,resW)
-
-       ! Collide and advance particles
-       call lp%collide(dt=time%dtmid)
-       call lp%advance(dt=time%dtmid,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
-            srcU=srcUlp,srcV=srcVlp,srcW=srcWlp)
-
-       ! Update density based on particle volume fraction
-       fs%rho=rho*(1.0_WP-lp%VF)
-       dRHOdt=(fs%RHO-fs%RHOold)/time%dtmid
+       ! Particle update
+       lpt: block
+         real(WP) :: dt_done,mydt
+         ! Get fluid stress
+         call fs%get_div_stress(resU,resV,resW)
+         ! Zero-out LPT source terms
+         srcUlp=0.0_WP; srcVlp=0.0_WP; srcWlp=0.0_WP
+         ! Sub-iteratore
+         dt_done=0.0_WP
+         do while (dt_done.lt.time%dtmid)
+            ! Decide the timestep size
+            mydt=min(lp_dt,time%dtmid-dt_done)
+            ! Collide and advance particles
+            call lp%collide(dt=mydt)
+            call lp%advance(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
+                 srcU=tmp1,srcV=tmp2,srcW=tmp3)
+            srcUlp=srcUlp+tmp1
+            srcVlp=srcVlp+tmp2
+            srcWlp=srcWlp+tmp3
+            ! Increment
+            dt_done=dt_done+mydt
+         end do
+         ! Update density based on particle volume fraction
+         fs%rho=rho*(1.0_WP-lp%VF)
+         dRHOdt=(fs%RHO-fs%RHOold)/time%dtmid
+       end block lpt
        wt_lpt%time=wt_lpt%time+parallel_time()-wt_lpt%time_in
 
        ! Turbulence modeling
        wt_sgs%time_in=parallel_time()
-       sgs_modeling: block
-         use sgsmodel_class, only: dynamic_smag
-         call fs%get_strainrate(SR)
-         call sgs%get_visc(type=dynamic_smag,dt=time%dtold,rho=rho0,Ui=Ui,Vi=Vi,Wi=Wi,SR=SR)
-         fs%visc=visc+sgs%visc
-       end block sgs_modeling
+!!$       sgs_modeling: block
+!!$         use sgsmodel_class, only: dynamic_smag
+!!$         call fs%get_strainrate(SR)
+!!$         call sgs%get_visc(type=dynamic_smag,dt=time%dtold,rho=rho0,Ui=Ui,Vi=Vi,Wi=Wi,SR=SR)
+!!$         fs%visc=visc+sgs%visc
+!!$       end block sgs_modeling
        wt_sgs%time=wt_sgs%time+parallel_time()-wt_sgs%time_in
 
        ! Perform sub-iterations
@@ -600,7 +617,7 @@ contains
     ! timetracker
 
     ! Deallocate work arrays
-    deallocate(resU,resV,resW,srcUlp,srcVlp,srcWlp,Ui,Vi,Wi,dRHOdt,SR)
+    deallocate(resU,resV,resW,srcUlp,srcVlp,srcWlp,Ui,Vi,Wi,dRHOdt,SR,tmp1,tmp2,tmp3)
 
   end subroutine simulation_final
 
