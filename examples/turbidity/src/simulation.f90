@@ -131,14 +131,14 @@ contains
     create_flow_solver: block
       use hypre_uns_class, only: gmres_amg  
       use hypre_str_class, only: pcg_pfmg
-      use lowmach_class,   only: dirichlet,clipped_neumann
+      use lowmach_class,   only: dirichlet,clipped_neumann,slip
       ! Create flow solver
       fs=lowmach(cfg=cfg,name='Variable density low Mach NS')
       ! Define boundary conditions
       call fs%add_bcond(name='left',type=dirichlet,locator=left_of_domain,face='x',dir=-1,canCorrect=.false.)
       call fs%add_bcond(name='right',type=dirichlet,locator=right_of_domain,face='x',dir=+1,canCorrect=.false.)
       call fs%add_bcond(name='bottom',type=dirichlet,locator=bottom_of_domain,face='y',dir=-1,canCorrect=.false.)
-      call fs%add_bcond(name='top',type=clipped_neumann,locator=top_of_domain,face='y',dir=+1,canCorrect=.true. )
+      call fs%add_bcond(name='top',type=slip,locator=top_of_domain,face='y',dir=+1,canCorrect=.true. )
       ! Assign constant density
       call param_read('Density',rho); fs%rho=rho
       ! Assign constant viscosity
