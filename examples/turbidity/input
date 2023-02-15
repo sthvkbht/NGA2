@@ -15,7 +15,7 @@ Max cfl number :	1
 Max time : 		10
 
 # Fluid properties
-Dynamic viscosity : 1.8e-5
+Dynamic viscosity : 8.9e-4
 Density :   1000
 Gravity :   0.976030432437939 -9.761324940547519 0
 Inlet velocity : 0.1

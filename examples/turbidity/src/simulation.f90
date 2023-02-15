@@ -6,6 +6,7 @@ module simulation
   use hypre_uns_class,   only: hypre_uns
   use hypre_str_class,   only: hypre_str
   use lowmach_class,     only: lowmach
+  use sgsmodel_class,    only: sgsmodel
   use timetracker_class, only: timetracker
   use ensight_class,     only: ensight
   use partmesh_class,    only: partmesh
@@ -19,6 +20,7 @@ module simulation
   type(hypre_str),   public :: vs
   type(lowmach),     public :: fs
   type(lpt),         public :: lp
+  type(sgsmodel),    public :: sgs
   type(timetracker), public :: time
   
   !> Ensight postprocessing
@@ -32,6 +34,7 @@ module simulation
   public :: simulation_init,simulation_run,simulation_final
   
   !> Work arrays and fluid properties
+  real(WP), dimension(:,:,:,:), allocatable :: SR
   real(WP), dimension(:,:,:), allocatable :: resU,resV,resW
   real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi,rho0,dRHOdt
   real(WP), dimension(:,:,:), allocatable :: srcUlp,srcVlp,srcWlp
@@ -43,7 +46,7 @@ module simulation
     real(WP) :: time
     real(WP) :: percent
   end type timer
-  type(timer) :: wt_total,wt_vel,wt_pres,wt_lpt,wt_rest
+  type(timer) :: wt_total,wt_vel,wt_pres,wt_lpt,wt_sgs,wt_rest
 
 contains
 
@@ -94,6 +97,7 @@ contains
       wt_vel%time=0.0_WP;   wt_vel%percent=0.0_WP
       wt_pres%time=0.0_WP;  wt_pres%percent=0.0_WP
       wt_lpt%time=0.0_WP;   wt_lpt%percent=0.0_WP
+      wt_sgs%time=0.0_WP;   wt_sgs%percent=0.0_WP
       wt_rest%time=0.0_WP;  wt_rest%percent=0.0_WP
     end block initialize_timers
 
@@ -102,12 +106,12 @@ contains
     create_flow_solver: block
       use hypre_uns_class, only: gmres_amg  
       use hypre_str_class, only: pcg_pfmg
-      use lowmach_class,   only: dirichlet,clipped_neumann
+      use lowmach_class,   only: dirichlet,neumann
       ! Create flow solver
       fs=lowmach(cfg=cfg,name='Variable density low Mach NS')
       ! Define boundary conditions
       call fs%add_bcond(name='bottom',type=dirichlet,locator=bottom_of_domain,face='y',dir=-1,canCorrect=.false.)
-      call fs%add_bcond(name='top',type=clipped_neumann,locator=top_of_domain,face='y',dir=+1,canCorrect=.true. )
+      call fs%add_bcond(name='top',type=neumann,locator=top_of_domain,face='y',dir=+1,canCorrect=.true. )
       ! Assign constant density
       call param_read('Density',rho); fs%rho=rho
       ! Assign constant viscosity
@@ -129,6 +133,7 @@ contains
 
     ! Allocate work arrays
     allocate_work_arrays: block
+      allocate(SR      (1:6,cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_)) 
       allocate(dRHOdt  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(resU    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(resV    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
@@ -268,6 +273,12 @@ contains
       call fs%get_mfr()
     end block initialize_velocity
 
+
+    ! Create an LES model
+    create_sgs: block
+      sgs=sgsmodel(cfg=fs%cfg,umask=fs%umask,vmask=fs%vmask,wmask=fs%wmask)
+    end block create_sgs
+
     
     ! Add Ensight output
     create_ensight: block
@@ -281,6 +292,7 @@ contains
       call ens_out%add_vector('velocity',Ui,Vi,Wi)
       call ens_out%add_scalar('epsp',lp%VF)
       call ens_out%add_scalar('pressure',fs%P)
+      call ens_out%add_scalar('visc_sgs',sgs%visc)
       ! Output to ensight
       if (ens_evt%occurs()) call ens_out%write_data(time%t)
     end block create_ensight
@@ -347,6 +359,8 @@ contains
       call tfile%add_column(wt_pres%percent,'Pressure [%]')
       call tfile%add_column(wt_lpt%time,'LPT [s]')
       call tfile%add_column(wt_lpt%percent,'LPT [%]')
+      call tfile%add_column(wt_sgs%time,'SGS [s]')
+      call tfile%add_column(wt_sgs%percent,'SGS [%]')
       call tfile%add_column(wt_rest%time,'Rest [s]')
       call tfile%add_column(wt_rest%percent,'Rest [%]')
       call tfile%write()
@@ -393,6 +407,16 @@ contains
        fs%rho=rho*(1.0_WP-lp%VF)
        dRHOdt=(fs%RHO-fs%RHOold)/time%dtmid
        wt_lpt%time=wt_lpt%time+parallel_time()-wt_lpt%time_in
+
+       ! Turbulence modeling
+       wt_sgs%time_in=parallel_time()
+       sgs_modeling: block
+         use sgsmodel_class, only: dynamic_smag
+         call fs%get_strainrate(SR)
+         call sgs%get_visc(type=dynamic_smag,dt=time%dtold,rho=rho0,Ui=Ui,Vi=Vi,Wi=Wi,SR=SR)
+         fs%visc=visc+sgs%visc
+       end block sgs_modeling
+       wt_sgs%time=wt_sgs%time+parallel_time()-wt_sgs%time_in
 
        ! Perform sub-iterations
        do while (time%it.le.time%itmax)
@@ -511,13 +535,15 @@ contains
        wt_vel%percent=wt_vel%time/wt_total%time*100.0_WP
        wt_pres%percent=wt_pres%time/wt_total%time*100.0_WP
        wt_lpt%percent=wt_lpt%time/wt_total%time*100.0_WP
-       wt_rest%time=wt_total%time-wt_vel%time-wt_pres%time-wt_lpt%time
+       wt_sgs%percent=wt_sgs%time/wt_total%time*100.0_WP
+       wt_rest%time=wt_total%time-wt_vel%time-wt_pres%time-wt_lpt%time-wt_sgs%time
        wt_rest%percent=wt_rest%time/wt_total%time*100.0_WP
        call tfile%write()
        wt_total%time=0.0_WP; wt_total%percent=0.0_WP
        wt_vel%time=0.0_WP;   wt_vel%percent=0.0_WP
        wt_pres%time=0.0_WP;  wt_pres%percent=0.0_WP
        wt_lpt%time=0.0_WP;   wt_lpt%percent=0.0_WP
+       wt_sgs%time=0.0_WP;   wt_sgs%percent=0.0_WP
        wt_rest%time=0.0_WP;  wt_rest%percent=0.0_WP
 
     end do
@@ -536,7 +562,7 @@ contains
     ! timetracker
 
     ! Deallocate work arrays
-    deallocate(resU,resV,resW,srcUlp,srcVlp,srcWlp,Ui,Vi,Wi,dRHOdt)
+    deallocate(resU,resV,resW,srcUlp,srcVlp,srcWlp,Ui,Vi,Wi,dRHOdt,SR)
 
   end subroutine simulation_final
 
