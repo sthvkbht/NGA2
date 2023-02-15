@@ -127,14 +127,14 @@ contains
     create_flow_solver: block
       use hypre_uns_class, only: gmres_amg  
       use hypre_str_class, only: pcg_pfmg
-      use lowmach_class,   only: dirichlet,neumann
+      use lowmach_class,   only: dirichlet,clipped_neumann
       ! Create flow solver
       fs=lowmach(cfg=cfg,name='Variable density low Mach NS')
       ! Define boundary conditions
       call fs%add_bcond(name='left',type=dirichlet,locator=left_of_domain,face='x',dir=-1,canCorrect=.false.)
       call fs%add_bcond(name='right',type=dirichlet,locator=right_of_domain,face='x',dir=+1,canCorrect=.false.)
       call fs%add_bcond(name='bottom',type=dirichlet,locator=bottom_of_domain,face='y',dir=-1,canCorrect=.false.)
-      call fs%add_bcond(name='top',type=neumann,locator=top_of_domain,face='y',dir=+1,canCorrect=.true. )
+      call fs%add_bcond(name='top',type=clipped_neumann,locator=top_of_domain,face='y',dir=+1,canCorrect=.true. )
       ! Assign constant density
       call param_read('Density',rho); fs%rho=rho
       ! Assign constant viscosity
@@ -280,20 +280,23 @@ contains
       call fs%get_bcond('left',mybc)
       do n=1,mybc%itr%no_
          i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-         fs%rhoU(i,j,k)=0.0_WP
-         fs%U(i,j,k)   =0.0_WP
+         fs%U(i,j,k)=0.0_WP
+         fs%V(i,j,k)=0.0_WP
+         fs%W(i,j,k)=0.0_WP
       end do
       call fs%get_bcond('right',mybc)
       do n=1,mybc%itr%no_
          i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-         fs%rhoU(i,j,k)=0.0_WP
-         fs%U(i,j,k)   =0.0_WP
+         fs%U(i,j,k)=0.0_WP
+         fs%V(i,j,k)=0.0_WP
+         fs%W(i,j,k)=0.0_WP
       end do
       call fs%get_bcond('bottom',mybc)
       do n=1,mybc%itr%no_
          i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-         fs%rhoU(i,j,k)=0.0_WP
-         fs%U(i,j,k)   =0.0_WP
+         fs%U(i,j,k)=0.0_WP
+         fs%V(i,j,k)=0.0_WP
+         fs%W(i,j,k)=0.0_WP
       end do
       ! Set density from particle volume fraction and store initial density
       fs%rho=rho*(1.0_WP-lp%VF)
