@@ -1,9 +1,5 @@
 # Parallelization
-<<<<<<< HEAD
-Partition :	1 4 1
-=======
 Partition :	4 1 1
->>>>>>> 0880680ec7b2954ab0dc78cfd2b7af281a5e034b
 
 # Mesh definition
 Pipe length   : 0.08	
@@ -18,7 +14,7 @@ Max cfl number :	1
 Max time : 		10
 
 # Fluid properties
-Bulk velocity     : 0.272
+Bulk velocity     : 2.3
 Dynamic viscosity : 1.8e-5
 Density           : 1.2
 Gravity           : -9.81 0 0

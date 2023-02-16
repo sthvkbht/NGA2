@@ -416,19 +416,26 @@ contains
     ! Initialize our velocity field
     initialize_velocity: block
       real(WP) :: Ubulk
+      ! Store fluid density without volume fractioin
+      fs%rho=rho; rho0=rho
+      ! Get velocity and mass flowrate
       if (restarted) then
          call df%pullvar(name='U',var=fs%U)
          call df%pullvar(name='V',var=fs%V)
          call df%pullvar(name='W',var=fs%W)
          call df%pullvar(name='P',var=fs%P)
+         call df%pullval(name='mfr',val=mfr)
+         call df%pullval(name='bforce',val=bforce)
       else
-         ! Initial velocity
          call param_read('Bulk velocity',Ubulk)
          fs%U=Ubulk; fs%V=0.0_WP; fs%W=0.0_WP; fs%P=0.0_WP
+         call fs%rho_multiply
+         ! Get target MFR using bulk velocity in absence of particles
+         mfr=get_bodyforce_mfr()
+         bforce=0.0_WP
       end if
-      ! Set density from particle volume fraction and store initial density
+      ! Set density from particle volume fraction
       fs%rho=rho*(1.0_WP-lp%VF)
-      rho0=rho
       ! Form momentum
       call fs%rho_multiply
       fs%rhoUold=fs%rhoU
@@ -438,14 +445,7 @@ contains
       call fs%get_div(drhodt=dRHOdt)
       ! Compute MFR through all boundary conditions
       call fs%get_mfr()
-      ! Set initial MFR and body force
-      if (restarted) then
-         call df%pullval(name='mfr',val=mfr)
-         call df%pullval(name='bforce',val=bforce)
-      else
-         mfr=get_bodyforce_mfr()
-         bforce=0.0_WP
-      end if
+      ! Store target MFR
       mfr_target=mfr
     end block initialize_velocity
 
