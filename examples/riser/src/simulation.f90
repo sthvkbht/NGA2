@@ -45,9 +45,13 @@ module simulation
   real(WP), dimension(:,:,:), allocatable :: resU,resV,resW
   real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi,rho0,dRHOdt
   real(WP), dimension(:,:,:), allocatable :: srcUlp,srcVlp,srcWlp
+  real(WP), dimension(:,:,:), allocatable :: tmp1,tmp2,tmp3
   real(WP), dimension(:,:,:), allocatable :: G
   real(WP), dimension(:,:,:,:), allocatable :: Gnorm
   real(WP) :: visc,rho,mfr,mfr_target,bforce
+
+  !> Max timestep size for LPT
+  real(WP) :: lp_dt,lp_dt_max
 
   !> Wallclock time for monitoring
   type :: timer
@@ -246,6 +250,9 @@ contains
       allocate(Wi      (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(rho0    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(G       (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+      allocate(tmp1    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+      allocate(tmp2    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+      allocate(tmp3    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(Gnorm   (1:3,cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
     end block allocate_work_arrays
 
@@ -283,6 +290,9 @@ contains
          dmin=dmean
          dmax=dmean
       end if
+      ! Maximum timestep size used for particles
+      call param_read('Particle timestep size',lp_dt_max,default=huge(1.0_WP))
+      lp_dt=lp_dt_max
       ! Get particle temperature from input
       call param_read('Particle temperature',Tp,default=298.15_WP)
       ! Set collision timescale
@@ -492,7 +502,7 @@ contains
     create_monitor: block
       real(WP) :: cfl
       ! Prepare some info about fields
-      call lp%get_cfl(time%dt,cflc=time%cfl,cfl=time%cfl)
+      call lp%get_cfl(time%dt,cflc=time%cfl)
       call fs%get_cfl(time%dt,cfl); time%cfl=max(time%cfl,cfl)
       call fs%get_max()
       call lp%get_max()
@@ -528,6 +538,7 @@ contains
       lptfile=monitor(amroot=lp%cfg%amRoot,name='lpt')
       call lptfile%add_column(time%n,'Timestep number')
       call lptfile%add_column(time%t,'Time')
+      call lptfile%add_column(lp_dt,'Particle dt')
       call lptfile%add_column(lp%VFmean,'VFp mean')
       call lptfile%add_column(lp%VFmax,'VFp max')
       call lptfile%add_column(lp%np,'Particle number')
@@ -583,7 +594,7 @@ contains
        wt_total%time_in=parallel_time()
 
        ! Increment time
-       call lp%get_cfl(time%dt,cflc=time%cfl,cfl=time%cfl)
+       call lp%get_cfl(time%dt,cflc=time%cfl)
        call fs%get_cfl(time%dt,cfl); time%cfl=max(time%cfl,cfl)
        call time%adjust_dt()
        call time%increment()
@@ -594,19 +605,36 @@ contains
        fs%Vold=fs%V; fs%rhoVold=fs%rhoV
        fs%Wold=fs%W; fs%rhoWold=fs%rhoW
 
-       ! Get fluid stress (include mean body force from mfr forcing)
+       ! Particle update
        wt_lpt%time_in=parallel_time()
-       call fs%get_div_stress(resU,resV,resW)
-       resU=resU+bforce
-
-       ! Collide and advance particles
-       call lp%collide(dt=time%dtmid,Gib=G,Nxib=Gnorm(1,:,:,:),Nyib=Gnorm(2,:,:,:),Nzib=Gnorm(3,:,:,:))
-       call lp%advance(dt=time%dtmid,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
-            srcU=srcUlp,srcV=srcVlp,srcW=srcWlp)
-
-       ! Update density based on particle volume fraction
-       fs%rho=rho*(1.0_WP-lp%VF)
-       dRHOdt=(fs%RHO-fs%RHOold)/time%dtmid
+       lpt: block
+         real(WP) :: dt_done,mydt
+         ! Get fluid stress
+         call fs%get_div_stress(resU,resV,resW)
+         resU=resU+bforce
+         ! Zero-out LPT source terms
+         srcUlp=0.0_WP; srcVlp=0.0_WP; srcWlp=0.0_WP
+         ! Sub-iteratore
+         call lp%get_cfl(lp_dt,cflc=cfl,cfl=cfl)
+         if (cfl.gt.0.0_WP) lp_dt=min(lp_dt*time%cflmax/cfl,lp_dt_max)
+         dt_done=0.0_WP
+         do while (dt_done.lt.time%dtmid)
+            ! Decide the timestep size
+            mydt=min(lp_dt,time%dtmid-dt_done)
+            ! Collide and advance particles
+            call lp%collide(dt=mydt)
+            call lp%advance(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
+                 srcU=tmp1,srcV=tmp2,srcW=tmp3)
+            srcUlp=srcUlp+tmp1
+            srcVlp=srcVlp+tmp2
+            srcWlp=srcWlp+tmp3
+            ! Increment
+            dt_done=dt_done+mydt
+         end do
+         ! Update density based on particle volume fraction
+         fs%rho=rho*(1.0_WP-lp%VF)
+         dRHOdt=(fs%RHO-fs%RHOold)/time%dtmid
+       end block lpt
        wt_lpt%time=wt_lpt%time+parallel_time()-wt_lpt%time_in
 
        ! Perform sub-iterations
@@ -809,7 +837,7 @@ contains
     ! timetracker
 
     ! Deallocate work arrays
-    deallocate(resU,resV,resW,srcUlp,srcVlp,srcWlp,Ui,Vi,Wi,dRHOdt,G,Gnorm)
+    deallocate(resU,resV,resW,srcUlp,srcVlp,srcWlp,Ui,Vi,Wi,dRHOdt,G,Gnorm,tmp1,tmp2,tmp3)
 
   end subroutine simulation_final
 
