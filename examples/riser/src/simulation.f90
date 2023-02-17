@@ -622,7 +622,7 @@ contains
             ! Decide the timestep size
             mydt=min(lp_dt,time%dtmid-dt_done)
             ! Collide and advance particles
-            call lp%collide(dt=mydt)
+            call lp%collide(dt=time%dtmid,Gib=G,Nxib=Gnorm(1,:,:,:),Nyib=Gnorm(2,:,:,:),Nzib=Gnorm(3,:,:,:))
             call lp%advance(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
                  srcU=tmp1,srcV=tmp2,srcW=tmp3)
             srcUlp=srcUlp+tmp1
