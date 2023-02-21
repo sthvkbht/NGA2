@@ -42,7 +42,7 @@ module simulation
   real(WP) :: visc,rho,inlet_velocity
 
   !> Max timestep size for LPT
-  real(WP) :: lp_dt
+  real(WP) :: lp_dt,lp_dt_max
   
   !> Wallclock time for monitoring
   type :: timer
@@ -195,7 +195,9 @@ contains
       call param_read('Particle diameter',dp)
       ! Set filter scale to 3.5*dx
       lp%filter_width=3.5_WP*cfg%min_meshsize
-      call param_read('LPT timestep size',lp_dt,default=huge(1.0_WP))
+      ! Maximum timestep size used for particles
+      call param_read('Particle timestep size',lp_dt_max,default=huge(1.0_WP))
+      lp_dt=lp_dt_max
 
       ! Root process initializes particles uniformly
       call param_read('Bed width',Wbed)
@@ -376,6 +378,7 @@ contains
       lptfile=monitor(amroot=lp%cfg%amRoot,name='lpt')
       call lptfile%add_column(time%n,'Timestep number')
       call lptfile%add_column(time%t,'Time')
+      call lptfile%add_column(lp_dt,'Particle dt')
       call lptfile%add_column(lp%VFmean,'VFp mean')
       call lptfile%add_column(lp%VFmax,'VFp max')
       call lptfile%add_column(lp%np,'Particle number')
@@ -405,7 +408,7 @@ contains
       call tfile%add_column(wt_rest%percent,'Rest [%]')
       call tfile%write()
     end block create_monitor
-
+    
   end subroutine simulation_init
 
 
@@ -424,7 +427,7 @@ contains
 
        ! Increment time
        call lp%get_cfl(time%dt,cflc=time%cfl)
-       call fs%get_cfl(time%dt,cfl,cfl); time%cfl=max(time%cfl,cfl)
+       call fs%get_cfl(time%dt,cfl); time%cfl=max(time%cfl,cfl)
        call time%adjust_dt()
        call time%increment()
 
@@ -440,9 +443,13 @@ contains
          real(WP) :: dt_done,mydt
          ! Get fluid stress
          call fs%get_div_stress(resU,resV,resW)
+         ! Get vorticity
+         call fs%get_vorticity(SR(1:3,:,:,:))
          ! Zero-out LPT source terms
          srcUlp=0.0_WP; srcVlp=0.0_WP; srcWlp=0.0_WP
          ! Sub-iteratore
+         call lp%get_cfl(lp_dt,cflc=cfl,cfl=cfl)
+         if (cfl.gt.0.0_WP) lp_dt=min(lp_dt*time%cflmax/cfl,lp_dt_max)
          dt_done=0.0_WP
          do while (dt_done.lt.time%dtmid)
             ! Decide the timestep size
@@ -450,7 +457,7 @@ contains
             ! Collide and advance particles
             call lp%collide(dt=mydt)
             call lp%advance(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
-                 srcU=tmp1,srcV=tmp2,srcW=tmp3)
+                 vortx=SR(1,:,:,:),vorty=SR(2,:,:,:),vortz=SR(3,:,:,:),srcU=tmp1,srcV=tmp2,srcW=tmp3)
             srcUlp=srcUlp+tmp1
             srcVlp=srcVlp+tmp2
             srcWlp=srcWlp+tmp3
