@@ -179,6 +179,8 @@ contains
          ! Read the datafile
          df=datafile(pg=cfg,fdata='restart/data_'//trim(adjustl(timestamp)))
       else
+         ! Prepare a new directory
+         if (fs%cfg%amRoot) call execute_command_line('mkdir -p restart')
          ! If we are not restarting, we will still need a datafile for saving restart files
          df=datafile(pg=cfg,filename=trim(cfg%name),nval=4,nvar=4)
          df%valname(1)='t'
@@ -805,8 +807,6 @@ contains
             character(len=str_medium) :: timestamp
             ! Prefix for files
             write(timestamp,'(es12.5)') time%t
-            ! Prepare a new directory
-            if (fs%cfg%amRoot) call execute_command_line('mkdir -p restart')
             ! Populate df and write it
             call df%pushval(name='t' ,val=time%t     )
             call df%pushval(name='dt',val=time%dt    )
