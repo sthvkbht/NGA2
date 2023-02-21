@@ -515,7 +515,7 @@ contains
           fs%U=2.0_WP*fs%U-fs%Uold+resU
           fs%V=2.0_WP*fs%V-fs%Vold+resV
           fs%W=2.0_WP*fs%W-fs%Wold+resW
-
+          
           ! Apply other boundary conditions and update momentum
           call fs%apply_bcond(time%tmid,time%dtmid)
           call fs%rho_multiply()
@@ -529,8 +529,20 @@ contains
             call fs%get_bcond('bottom',mybc)
             do n=1,mybc%itr%no_
                i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-               fs%rhoU(i,j,k)=0.0_WP
-               fs%U(i,j,k)   =0.0_WP
+               fs%rhoU(i,j,k)=0.0_WP; fs%rhoV(i,j,k)=0.0_WP; fs%rhoW(i,j,k)=0.0_WP
+               fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
+            end do
+            call fs%get_bcond('left',mybc)
+            do n=1,mybc%itr%no_
+               i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
+               fs%rhoU(i,j,k)=0.0_WP; fs%rhoV(i,j,k)=0.0_WP; fs%rhoW(i,j,k)=0.0_WP
+               fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
+            end do
+            call fs%get_bcond('right',mybc)
+            do n=1,mybc%itr%no_
+               i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
+               fs%rhoU(i,j,k)=0.0_WP; fs%rhoV(i,j,k)=0.0_WP; fs%rhoW(i,j,k)=0.0_WP
+               fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
             end do
           end block dirichlet_velocity
 
