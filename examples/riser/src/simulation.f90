@@ -179,7 +179,7 @@ contains
          ! Read the datafile
          df=datafile(pg=cfg,fdata='restart/data_'//trim(adjustl(timestamp)))
       else
-         ! Preparing a new directory for storing files for restart
+         ! Prepare a new directory for storing files for restart
          call execute_command_line('mkdir -p restart')
          ! If we are not restarting, we will still need a datafile for saving restart files
          df=datafile(pg=cfg,filename=trim(cfg%name),nval=4,nvar=4)
