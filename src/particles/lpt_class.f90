@@ -113,6 +113,9 @@ module lpt_class
      ! Particle volume fraction
      real(WP), dimension(:,:,:), allocatable :: VF       !< Particle volume fraction, cell-centered
 
+     ! Pseudo-turbulent kinetic energy
+     real(WP), dimension(:,:,:), allocatable :: ptke     !< Pseudo-turbulent kinetic energy, cell-centered
+
      ! Filtering operation
      logical :: implicit_filter                          !< Solve implicitly
      real(WP) :: filter_width                            !< Characteristic filter width
@@ -134,6 +137,7 @@ module lpt_class
      procedure :: get_max                                !< Extract various monitoring data
      procedure :: get_cfl                                !< Calculate maximum CFL
      procedure :: update_VF                              !< Compute particle volume fraction
+     procedure :: get_ptke                               !< Compute pseudo-turbulent kinetic energy (and Reynolds stress)
      procedure :: filter                                 !< Apply volume filtering to field
      procedure :: inject                                 !< Inject particles at a prescribed boundary
   end type lpt
@@ -173,8 +177,9 @@ contains
     ! Initialize MPI derived datatype for a particle
     call prepare_mpi_part()
 
-    ! Allocate VF and src arrays on cfg mesh
-    allocate(self%VF  (self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%VF  =0.0_WP
+    ! Allocate VF and PTKE on cfg mesh
+    allocate(self%VF  (self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%VF=0.0_WP
+    allocate(self%ptke(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%ptke=0.0_WP
 
     ! Set filter width to zero by default
     self%filter_width=0.0_WP
@@ -889,6 +894,205 @@ contains
     ! Apply volume filter
     call this%filter(this%VF)
   end subroutine update_VF
+
+
+  !> Compute pseudo-turbulent kinetic energy and Reynolds stresses
+  !> Mehrabadi et al. (2015) "Pseudo-turbulent gas-phase velocity 
+  !> fluctuations in homogeneous gas–solid flow:
+  !> fixed particle assemblies and freely evolving suspensions"
+  subroutine get_ptke(this,Ui,Vi,Wi,visc,rho,PTRS)
+    use mathtools, only: Pi
+    use messager, only: die
+    implicit none
+    class(lpt), intent(inout) :: this
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: Ui        !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: Vi        !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: Wi        !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: rho       !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: visc      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(1:,this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(out) :: PTRS  !< Needs to be (1:6,imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(:,:,:), allocatable :: slip_x,slip_y,slip_z,Re
+    integer :: i,j,k
+    real(WP) :: Vp,frho,fvisc,pVF,Rep,b_par,b_perp
+    real(WP), dimension(3) :: fvel,slip
+    real(WP), parameter :: a=0.523_WP,b=0.305_WP,c=0.144_WP,d=3.511_WP,e=1.801_WP,f=0.005_WP
+
+    ! Rotation variables
+    integer :: ind
+    real(WP), parameter :: one_third=1.0_WP/3.0_WP
+    real(WP) :: U1_dot,U2_dot,U3_dot,rhoK
+    real(WP), dimension(3) :: U1,U2,U3
+    real(WP), dimension(3,3) :: Q,temp,bij
+
+    ! Check PTRS's first dimension
+    if (size(PTRS,dim=1).ne.6) call die('[lpt get_ptke] PTRS should be of size (1:6,imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)')
+
+    allocate(slip_x(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); slip_x=0.0_WP
+    allocate(slip_y(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); slip_x=0.0_WP
+    allocate(slip_z(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); slip_x=0.0_WP
+    allocate(Re(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); Re=0.0_WP
+
+    ! Loop over all particles
+    do i=1,this%np_
+       ! Skip inactive particle
+       if (this%p(i)%flag.eq.1.or.this%p(i)%id.eq.0) cycle
+
+       ! Interpolate fluid quantities to particle location
+       fvel(1)=this%cfg%get_scalar(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=Ui,bc='n')
+       fvel(2)=this%cfg%get_scalar(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=Vi,bc='n')
+       fvel(3)=this%cfg%get_scalar(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=Wi,bc='n')
+       fvisc=this%cfg%get_scalar(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=visc,bc='n')
+       fvisc=fvisc+epsilon(1.0_WP)
+       frho=this%cfg%get_scalar(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=rho,bc='n')
+       pVF=this%cfg%get_scalar(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=this%VF,bc='n')
+       pVF=pVF+epsilon(1.0_WP)
+
+       ! Compute particle slip and Reynolds number
+       slip=this%p(i)%vel-fvel
+       Rep=frho*norm2(slip)*this%p(i)%d/fvisc
+
+       ! Transfer to the grid
+       Vp=Pi/6.0_WP*this%p(i)%d**3
+       call this%cfg%set_scalar(Sp=Vp*slip(1)/pVF,pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=slip_x,bc='n')
+       call this%cfg%set_scalar(Sp=Vp*slip(2)/pVF,pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=slip_y,bc='n')
+       call this%cfg%set_scalar(Sp=Vp*slip(3)/pVF,pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=slip_z,bc='n')
+       call this%cfg%set_scalar(Sp=Vp*Rep/pVF    ,pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=Re    ,bc='n')       
+    end do
+    slip_x=slip_x/this%cfg%vol
+    slip_y=slip_y/this%cfg%vol
+    slip_z=slip_z/this%cfg%vol
+    Re=Re/this%cfg%vol
+    ! Sum at boundaries
+    call this%cfg%syncsum(slip_x)
+    call this%cfg%syncsum(slip_y)
+    call this%cfg%syncsum(slip_z)
+    call this%cfg%syncsum(Re)
+    ! Apply volume filter
+    call this%filter(slip_x)
+    call this%filter(slip_y)
+    call this%filter(slip_z)
+    call this%filter(Re)
+
+    PTRS=0.0_WP
+    do k=this%cfg%kmino_,this%cfg%kmaxo_
+       do j=this%cfg%jmino_,this%cfg%jmaxo_
+          do i=this%cfg%imino_,this%cfg%imaxo_
+             ! Get Eulerian particle data (remove volume fraction)
+             slip(1)=slip_x(i,j,k)
+             slip(2)=slip_y(i,j,k)
+             slip(3)=slip_z(i,j,k)
+             Rep=Re(i,j,k)
+             pVF=this%VF(i,j,k)
+
+             ! Compute PTKE
+             this%ptke(i,j,k) = 2.0_WP*pVF + 2.5_WP*pVF*(1.0_WP-pVF)**3*exp(-pVF*sqrt(Rep))
+             this%ptke(i,j,k) = this%ptke(i,j,k)*0.5_WP*(Ui(i,j,k)**2+Vi(i,j,k)**2+Wi(i,j,k)**2)
+             
+             !  Assume isotropic in 2D
+             if (this%cfg%nx.eq.1) then
+                bij = 0.0_WP
+                bij(2,2) = 0.5_WP
+                bij(3,3) = 0.5_WP
+             else if (this%cfg%ny.eq.1) then
+                bij = 0.0_WP
+                bij(1,1) = 0.5_WP
+                bij(3,3) = 0.5_WP
+             else if (this%cfg%nz.eq.1) then
+                bij = 0.0_WP
+                bij(1,1) = 0.5_WP
+                bij(2,2) = 0.5_WP
+             else
+                ! Apply rotation in 3D
+                b_par  = a/(1.0_WP+b*exp(-c*Rep))*exp(-d*pVF/(1.0_WP+e*exp(-f*Rep)))
+                b_perp = -0.5_WP*b_par
+
+                ! Add trace
+                b_par  = b_par  + one_third
+                b_perp = b_perp + one_third
+
+                ! Compute the reference axes
+                U1 = slip
+                U1_dot = dot_product(U1,U1)+epsilon(1.0_WP)
+
+                ! Generate an orthonormal set based on max slip component
+                ind = maxloc(abs(U1),dim=1)
+                select case (ind)
+                case(1)
+                   ! Max slip in x-direction
+                   U2     = -(U1(2)/U1_dot)*U1
+                   U2(2)  = 1.0_WP + U2(2)
+                   U2_dot = dot_product(U2,U2)+epsilon(1.0_WP)
+                case(2)
+                   ! Max slip in y-direction
+                   U2     = -(U1(1)/U1_dot)*U1
+                   U2(1)  = 1.0_WP + U2(1)
+                   U2_dot = dot_product(U2,U2)+epsilon(1.0_WP)
+                case(3)
+                   ! Max slip in z-direction
+                   U2     = -(U1(1)/U1_dot)*U1
+                   U2(1)  = 1.0_WP + U2(1)
+                   U2_dot = dot_product(U2,U2)+epsilon(1.0_WP)                
+                end select
+
+                ! U3 right-hand coordinate system (cross product)
+                U3(1) = U1(2)*U2(3) - U1(3)*U2(2)
+                U3(2) = U1(3)*U2(1) - U1(1)*U2(3)
+                U3(3) = U1(1)*U2(2) - U1(2)*U2(1)
+                U3_dot = dot_product(U3,U3)+epsilon(1.0_WP)
+
+                ! Normalize basis vectors
+                U1 = U1/sqrt(U1_dot)
+                U2 = U2/sqrt(U2_dot)
+                U3 = U3/sqrt(U3_dot)
+
+                ! Construct rotation matrices
+                Q(:,1) = U1
+                Q(:,2) = U2
+                Q(:,3) = U3
+
+                ! Multiply Q by b^dag
+                temp(1,1) = Q(1,1)*b_par
+                temp(2,1) = Q(2,1)*b_par
+                temp(3,1) = Q(3,1)*b_par
+
+                temp(1,2) = Q(1,2)*b_perp
+                temp(2,2) = Q(2,2)*b_perp
+                temp(3,2) = Q(3,2)*b_perp
+
+                temp(1,3) = Q(1,3)*b_perp
+                temp(2,3) = Q(2,3)*b_perp
+                temp(3,3) = Q(3,3)*b_perp
+
+                ! Multiply Q*b^dag (temp) by Q^T  to get bij tensor
+                bij(1,1) = temp(1,1)*Q(1,1) + temp(1,2)*Q(1,2) + temp(1,3)*Q(1,3)
+                bij(1,2) = temp(1,1)*Q(2,1) + temp(1,2)*Q(2,2) + temp(1,3)*Q(2,3)
+                bij(1,3) = temp(1,1)*Q(3,1) + temp(1,2)*Q(3,2) + temp(1,3)*Q(3,3)
+
+                bij(2,1) = temp(2,1)*Q(1,1) + temp(2,2)*Q(1,2) + temp(2,3)*Q(1,3)
+                bij(2,2) = temp(2,1)*Q(2,1) + temp(2,2)*Q(2,2) + temp(2,3)*Q(2,3)
+                bij(2,3) = temp(2,1)*Q(3,1) + temp(2,2)*Q(3,2) + temp(2,3)*Q(3,3)
+
+                bij(3,1) = temp(3,1)*Q(1,1) + temp(3,2)*Q(1,2) + temp(3,3)*Q(1,3)
+                bij(3,2) = temp(3,1)*Q(2,1) + temp(3,2)*Q(2,2) + temp(3,3)*Q(2,3)
+                bij(3,3) = temp(3,1)*Q(3,1) + temp(3,2)*Q(3,2) + temp(3,3)*Q(3,3)
+
+             end if
+
+             ! Store the Reynolds stress
+             rhoK=rho(i,j,k)*this%ptke(i,j,k)
+             PTRS(1,i,j,k) = 2.0_WP*rhoK*bij(1,1)
+             PTRS(2,i,j,k) = 2.0_WP*rhoK*bij(2,2)
+             PTRS(3,i,j,k) = 2.0_WP*rhoK*bij(3,3)
+             PTRS(4,i,j,k) = 2.0_WP*rhoK*bij(1,2)
+             PTRS(5,i,j,k) = 2.0_WP*rhoK*bij(2,3)
+             PTRS(6,i,j,k) = 2.0_WP*rhoK*bij(1,3)
+          end do
+       end do
+    end do
+    
+    ! Clean up
+    deallocate(slip_x,slip_y,slip_z,Re)
+  end subroutine get_ptke
 
 
   !> Laplacian filtering operation
