@@ -113,14 +113,15 @@ module lpt_class
      ! Particle volume fraction
      real(WP), dimension(:,:,:), allocatable :: VF       !< Particle volume fraction, cell-centered
 
-     ! Pseudo-turbulent kinetic energy
-     real(WP), dimension(:,:,:), allocatable :: ptke     !< Pseudo-turbulent kinetic energy, cell-centered
-
      ! Filtering operation
      logical :: implicit_filter                          !< Solve implicitly
      real(WP) :: filter_width                            !< Characteristic filter width
-     real(WP), dimension(:,:,:,:), allocatable :: div_x,div_y,div_z    !< Divergence operator
-     real(WP), dimension(:,:,:,:), allocatable :: grd_x,grd_y,grd_z    !< Gradient operator
+     real(WP), dimension(:,:,:,:), allocatable :: div_x,div_y,div_z !< Divergence operator
+     real(WP), dimension(:,:,:,:), allocatable :: grd_x,grd_y,grd_z !< Gradient operator
+
+     ! Pseudo turbulence
+     real(WP), dimension(:,:,:), allocatable :: ptke     !< Pseudo-turbulent kinetic energy, cell-centered
+     real(WP), dimension(:,:,:,:), allocatable :: itpr_x,itpr_y,itpr_z !< Interpolation from cell face to cell center
 
    contains
      procedure :: update_partmesh                        !< Update a partmesh object using current particles
@@ -223,6 +224,21 @@ contains
        end do
     end do
 
+    ! Allocate finite difference density interpolation coefficients
+    allocate(self%itpr_x(-1:0,self%cfg%imin_:self%cfg%imax_+1,self%cfg%jmin_:self%cfg%jmax_+1,self%cfg%kmin_:self%cfg%kmax_+1)) !< X-face-centered
+    allocate(self%itpr_y(-1:0,self%cfg%imin_:self%cfg%imax_+1,self%cfg%jmin_:self%cfg%jmax_+1,self%cfg%kmin_:self%cfg%kmax_+1)) !< Y-face-centered
+    allocate(self%itpr_z(-1:0,self%cfg%imin_:self%cfg%imax_+1,self%cfg%jmin_:self%cfg%jmax_+1,self%cfg%kmin_:self%cfg%kmax_+1)) !< Z-face-centered
+    ! Create density interpolation coefficients to cell face
+    do k=self%cfg%kmin_,self%cfg%kmax_+1
+       do j=self%cfg%jmin_,self%cfg%jmax_+1
+          do i=self%cfg%imin_,self%cfg%imax_+1
+             self%itpr_x(:,i,j,k)=self%cfg%dxmi(i)*[self%cfg%xm(i)-self%cfg%x(i),self%cfg%x(i)-self%cfg%xm(i-1)] !< Linear interpolation in x from [xm,ym,zm] to [x,ym,zm]
+             self%itpr_y(:,i,j,k)=self%cfg%dymi(j)*[self%cfg%ym(j)-self%cfg%y(j),self%cfg%y(j)-self%cfg%ym(j-1)] !< Linear interpolation in y from [xm,ym,zm] to [xm,y,zm]
+             self%itpr_z(:,i,j,k)=self%cfg%dzmi(k)*[self%cfg%zm(k)-self%cfg%z(k),self%cfg%z(k)-self%cfg%zm(k-1)] !< Linear interpolation in z from [xm,ym,zm] to [xm,ym,z]
+          end do
+       end do
+    end do
+    
     ! Loop over the domain and zero divergence in walls
     do k=self%cfg%kmin_,self%cfg%kmax_
        do j=self%cfg%jmin_,self%cfg%jmax_
@@ -652,7 +668,7 @@ contains
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcV   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcW   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcE   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    integer :: i,j,k,ierr
+    integer :: i,ierr
     real(WP) :: mydt,dt_done,deng,Ip
     real(WP), dimension(3) :: acc,torque,dmom
     real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_) :: sx,sy,sz
@@ -900,18 +916,23 @@ contains
   !> Mehrabadi et al. (2015) "Pseudo-turbulent gas-phase velocity 
   !> fluctuations in homogeneous gas–solid flow:
   !> fixed particle assemblies and freely evolving suspensions"
-  subroutine get_ptke(this,Ui,Vi,Wi,visc,rho,PTRS)
+  subroutine get_ptke(this,dt,Ui,Vi,Wi,visc,rho,srcU,srcV,srcW)
     use mathtools, only: Pi
     use messager, only: die
     implicit none
     class(lpt), intent(inout) :: this
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: Ui        !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: Vi        !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: Wi        !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: rho       !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: visc      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(1:,this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(out) :: PTRS  !< Needs to be (1:6,imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), intent(inout) :: dt  !< Timestep size over which to advance
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: Ui     !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: Vi     !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: Wi     !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: rho    !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: visc   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcU   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcV   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcW   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(:,:,:), allocatable :: slip_x,slip_y,slip_z,Re
+    real(WP), dimension(:,:,:,:), allocatable :: PTRS
+    real(WP), dimension(:,:,:), allocatable :: FX,FY,FZ
     integer :: i,j,k
     real(WP) :: Vp,frho,fvisc,pVF,Rep,b_par,b_perp
     real(WP), dimension(3) :: fvel,slip
@@ -924,13 +945,11 @@ contains
     real(WP), dimension(3) :: U1,U2,U3
     real(WP), dimension(3,3) :: Q,temp,bij
 
-    ! Check PTRS's first dimension
-    if (size(PTRS,dim=1).ne.6) call die('[lpt get_ptke] PTRS should be of size (1:6,imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)')
-
     allocate(slip_x(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); slip_x=0.0_WP
-    allocate(slip_y(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); slip_x=0.0_WP
-    allocate(slip_z(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); slip_x=0.0_WP
+    allocate(slip_y(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); slip_y=0.0_WP
+    allocate(slip_z(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); slip_z=0.0_WP
     allocate(Re(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_)); Re=0.0_WP
+    allocate(PTRS(1:6,this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
 
     ! Loop over all particles
     do i=1,this%np_
@@ -956,7 +975,7 @@ contains
        call this%cfg%set_scalar(Sp=Vp*slip(1)/pVF,pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=slip_x,bc='n')
        call this%cfg%set_scalar(Sp=Vp*slip(2)/pVF,pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=slip_y,bc='n')
        call this%cfg%set_scalar(Sp=Vp*slip(3)/pVF,pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=slip_z,bc='n')
-       call this%cfg%set_scalar(Sp=Vp*Rep/pVF    ,pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=Re    ,bc='n')       
+       call this%cfg%set_scalar(Sp=Vp*Rep/pVF    ,pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=Re    ,bc='n')
     end do
     slip_x=slip_x/this%cfg%vol
     slip_y=slip_y/this%cfg%vol
@@ -1089,9 +1108,86 @@ contains
           end do
        end do
     end do
-    
+
+    ! Return source terms
+    if (present(srcU)) then
+       allocate(FX(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
+       allocate(FY(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
+       allocate(FZ(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
+       ! Interpolate PTRS to cell face
+       do k=this%cfg%kmin_,this%cfg%kmax_+1
+          do j=this%cfg%jmin_,this%cfg%jmax_+1
+             do i=this%cfg%imin_,this%cfg%imax_+1
+                FX(i,j,k)=sum(this%itpr_x(:,i,j,k)*PTRS(1,i-1:i,j,k))
+                FY(i,j,k)=sum(this%itpr_y(:,i,j,k)*PTRS(4,i,j-1:j,k))
+                FZ(i,j,k)=sum(this%itpr_z(:,i,j,k)*PTRS(6,i,j,k-1:k))
+             end do
+          end do
+       end do
+       ! Take divergence
+       do k=this%cfg%kmin_,this%cfg%kmax_
+          do j=this%cfg%jmin_,this%cfg%jmax_
+             do i=this%cfg%imin_,this%cfg%imax_
+                srcU(i,j,k)=-dt*(sum(this%div_x(:,i,j,k)*FX(i:i+1,j,k))+sum(this%div_y(:,i,j,k)*FY(i,j:j+1,k))+sum(this%div_z(:,i,j,k)*FZ(i,j,k:k+1)))
+             end do
+          end do
+       end do
+       call this%cfg%sync(srcU)
+       deallocate(FX,FY,FZ)
+    end if
+    if (present(srcV)) then
+       allocate(FX(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
+       allocate(FY(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
+       allocate(FZ(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
+       ! Interpolate PTRS to cell face
+       do k=this%cfg%kmin_,this%cfg%kmax_+1
+          do j=this%cfg%jmin_,this%cfg%jmax_+1
+             do i=this%cfg%imin_,this%cfg%imax_+1
+                FX(i,j,k)=sum(this%itpr_x(:,i,j,k)*PTRS(4,i-1:i,j,k))
+                FY(i,j,k)=sum(this%itpr_y(:,i,j,k)*PTRS(2,i,j-1:j,k))
+                FZ(i,j,k)=sum(this%itpr_z(:,i,j,k)*PTRS(5,i,j,k-1:k))
+             end do
+          end do
+       end do
+       ! Take divergence
+       do k=this%cfg%kmin_,this%cfg%kmax_
+          do j=this%cfg%jmin_,this%cfg%jmax_
+             do i=this%cfg%imin_,this%cfg%imax_
+                srcV(i,j,k)=-dt*(sum(this%div_x(:,i,j,k)*FX(i:i+1,j,k))+sum(this%div_y(:,i,j,k)*FY(i,j:j+1,k))+sum(this%div_z(:,i,j,k)*FZ(i,j,k:k+1)))
+             end do
+          end do
+       end do
+       call this%cfg%sync(srcV)
+       deallocate(FX,FY,FZ)
+    end if
+    if (present(srcW)) then
+       allocate(FX(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
+       allocate(FY(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
+       allocate(FZ(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
+       ! Interpolate PTRS to cell face
+       do k=this%cfg%kmin_,this%cfg%kmax_+1
+          do j=this%cfg%jmin_,this%cfg%jmax_+1
+             do i=this%cfg%imin_,this%cfg%imax_+1
+                FX(i,j,k)=sum(this%itpr_x(:,i,j,k)*PTRS(6,i-1:i,j,k))
+                FY(i,j,k)=sum(this%itpr_y(:,i,j,k)*PTRS(5,i,j-1:j,k))
+                FZ(i,j,k)=sum(this%itpr_z(:,i,j,k)*PTRS(3,i,j,k-1:k))
+             end do
+          end do
+       end do
+       ! Take divergence
+       do k=this%cfg%kmin_,this%cfg%kmax_
+          do j=this%cfg%jmin_,this%cfg%jmax_
+             do i=this%cfg%imin_,this%cfg%imax_
+                srcW(i,j,k)=-dt*(sum(this%div_x(:,i,j,k)*FX(i:i+1,j,k))+sum(this%div_y(:,i,j,k)*FY(i,j:j+1,k))+sum(this%div_z(:,i,j,k)*FZ(i,j,k:k+1)))
+             end do
+          end do
+       end do
+       call this%cfg%sync(srcW)
+       deallocate(FX,FY,FZ)
+    end if
+
     ! Clean up
-    deallocate(slip_x,slip_y,slip_z,Re)
+    deallocate(slip_x,slip_y,slip_z,Re,PTRS)
   end subroutine get_ptke
 
 
@@ -1384,7 +1480,6 @@ contains
       implicit none
       real(WP), dimension(3) :: pos
       real(WP) :: rand,r,theta
-      integer :: ip,jp,kp
       ! Set x position
       pos(1) = this%inj_pos(1)
       ! Random y & z position within a circular region
@@ -1637,8 +1732,8 @@ contains
     type(part), dimension(:), allocatable :: torecv
     integer :: no,nsend,nrecv
     type(MPI_Status) :: status
-    integer :: icnt,isrc,idst,ierr
-    integer :: i,n
+    integer :: isrc,idst,ierr
+    integer :: n
 
     ! Check overlap size
     if (present(nover)) then

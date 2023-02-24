@@ -70,9 +70,9 @@ contains
       use mpi_f08,   only: MPI_ALLREDUCE,MPI_SUM
       use parallel,  only: MPI_REAL_WP
       implicit none
-      integer :: iunit,ierr,i,j,k
-      real(WP), dimension(:), allocatable :: Uavg,Uavg_,vol,vol_
-      character(len=str_medium) :: filename,timestamp
+!!$      integer :: iunit,ierr,i,j,k
+!!$      real(WP), dimension(:), allocatable :: Uavg,Uavg_,vol,vol_
+!!$      character(len=str_medium) :: filename,timestamp
 !!$      ! Allocate radial line storage
 !!$      allocate(Uavg (fs%cfg%jmin:fs%cfg%jmax)); Uavg =0.0_WP
 !!$      allocate(Uavg_(fs%cfg%jmin:fs%cfg%jmax)); Uavg_=0.0_WP
@@ -265,7 +265,7 @@ contains
       use mathtools, only: Pi,twoPi
       use mpi_f08,  only: MPI_SUM,MPI_ALLREDUCE,MPI_INTEGER
       use parallel, only: MPI_REAL_WP
-      real(WP) :: VFavg,Volp,Vol_,sumVolp,Tp,meand,dist,r,buf
+      real(WP) :: VFavg,Vol_,sumVolp,Tp,meand,r,buf
       real(WP) :: dmean,dsd,dmin,dmax,dshift
       real(WP), dimension(:), allocatable :: dp
       integer :: i,j,k,ii,jj,kk,nn,ip,jp,kp,np,offset,ierr
@@ -323,7 +323,7 @@ contains
             end do
          end do
          ! Get particle diameters
-         np=5*VFavg*Vol_/(pi*dmean**3/6.0_WP)
+         np=5*ceiling(VFavg*Vol_/(pi*dmean**3/6.0_WP))
          allocate(dp(np))
          sumVolp=0.0_WP; np=0
          do while(sumVolp.lt.VFavg*Vol_)
@@ -496,6 +496,7 @@ contains
       call ens_out%add_scalar('levelset',G)
       call ens_out%add_scalar('pressure',fs%P)
       call ens_out%add_scalar('epsp',lp%VF)
+      call ens_out%add_scalar('ptke',lp%ptke)
       ! Output to ensight
       if (ens_evt%occurs()) call ens_out%write_data(time%t)
     end block create_ensight
@@ -624,7 +625,7 @@ contains
             ! Decide the timestep size
             mydt=min(lp_dt,time%dtmid-dt_done)
             ! Collide and advance particles
-            call lp%collide(dt=time%dtmid,Gib=G,Nxib=Gnorm(1,:,:,:),Nyib=Gnorm(2,:,:,:),Nzib=Gnorm(3,:,:,:))
+            call lp%collide(dt=mydt,Gib=G,Nxib=Gnorm(1,:,:,:),Nyib=Gnorm(2,:,:,:),Nzib=Gnorm(3,:,:,:))
             call lp%advance(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
                  srcU=tmp1,srcV=tmp2,srcW=tmp3)
             srcUlp=srcUlp+tmp1
@@ -636,6 +637,11 @@ contains
          ! Update density based on particle volume fraction
          fs%rho=rho*(1.0_WP-lp%VF)
          dRHOdt=(fs%RHO-fs%RHOold)/time%dtmid
+         ! Compute PTKE and store source terms
+         call lp%get_ptke(dt=time%dtmid,Ui=Ui,Vi=Vi,Wi=Wi,visc=fs%visc,rho=fs%rho,srcU=tmp1,srcV=tmp2,srcW=tmp3)
+         srcUlp=srcUlp+tmp1
+         srcVlp=srcVlp+tmp2
+         srcWlp=srcWlp+tmp3
        end block lpt
        wt_lpt%time=wt_lpt%time+parallel_time()-wt_lpt%time_in
 
