@@ -1,13 +1,13 @@
 !> Various definitions and tools for running an NGA2 simulation
 module simulation
-  use precision,            only: WP
-  use geometry,             only: cfg
-  use fouriersolver_class,  only: fouriersolver
-  use ensight_class,        only: ensight
+  use precision,        only: WP
+  use geometry,         only: cfg
+  use fftsolver_class,  only: fftsolver
+  use ensight_class,    only: ensight
   implicit none
   private
 
-  type(fouriersolver), public :: ps
+  type(fftsolver), public :: ps
 
   !> Ensight postprocessing
   type(ensight)  :: ens_out
@@ -52,7 +52,7 @@ contains
       integer :: i, j, k
 
       ! create solver
-      ps = fouriersolver(cfg=cfg, nst=7, name='FFT Poisson Test')
+      ps = fftsolver(cfg=cfg, nst=7, name='FFT Poisson Test')
       call ps%init()
 
       ! set stencil
@@ -66,12 +66,12 @@ contains
       do k = cfg%kmin_, cfg%kmax_
         do j = cfg%jmin_, cfg%jmax_
           do i = cfg%imin_, cfg%imax_
-            ps%opr(2,i,j,k) = cfg%dxmi(i)**2
-            ps%opr(3,i,j,k) = cfg%dxmi(i)**2
-            ps%opr(4,i,j,k) = cfg%dymi(j)**2
-            ps%opr(5,i,j,k) = cfg%dymi(j)**2
-            ps%opr(6,i,j,k) = cfg%dzmi(k)**2
-            ps%opr(7,i,j,k) = cfg%dzmi(k)**2
+            ps%opr(2,i,j,k) = -cfg%dxmi(i)**2
+            ps%opr(3,i,j,k) = -cfg%dxmi(i)**2
+            ps%opr(4,i,j,k) = -cfg%dymi(j)**2
+            ps%opr(5,i,j,k) = -cfg%dymi(j)**2
+            ps%opr(6,i,j,k) = -cfg%dzmi(k)**2
+            ps%opr(7,i,j,k) = -cfg%dzmi(k)**2
             ps%opr(1,i,j,k) = - sum(ps%opr(2:7,i,j,k))
           end do
         end do
@@ -136,6 +136,20 @@ contains
 
     ! Output to ensight
     call ens_out%write_data(0.0_WP)
+
+    ! Print integral before and after
+    findsum: block
+      real(WP) :: rhssum, solsum
+
+      call cfg%integrate(ps%rhs, rhssum)
+      call cfg%integrate(ps%sol, solsum)
+
+      if (cfg%amRoot) then
+        write(*,*) "integral of rhs: ", rhssum
+        write(*,*) "integral of sol: ", solsum
+      end if
+
+    end block findsum
 
   end subroutine simulation_run
 
