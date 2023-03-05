@@ -24,11 +24,6 @@ INCLUDE_LOCATIONS += $(Ulocs)
 VPATH_LOCATIONS   += $(Ulocs)
 
 # Define external libraries - this can also be in .profile
-#HDF5_DIR =  /opt/hdf5
-HYPRE_DIR = /opt/hypre
-LAPACK_DIR = /opt/lapack-3.10.1
-FFTW_DIR = /opt/fftw-3.3.10
-P3DFFT_DIR = /opt/p3dfft-3/build
 
 # NGA compilation definitions
 include $(NGA_HOME)/tools/GNUMake/Make.defs
