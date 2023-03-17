@@ -105,8 +105,9 @@ contains
          this%stmap(this%stc(st,1),this%stc(st,2),this%stc(st,3))=st
       end do
 
-      ! Initialize diagonal solver
-      this%dsol=diag(cfg=this%cfg,name=this%name,n=2*maxval(abs(this%stc))+1)
+      ! Initialize diagonal solver now that we know the stencil size
+      st=max(abs(stx1),abs(stx2),abs(sty1),abs(sty2),abs(stz1),abs(stz2))
+      this%dsol=diag(cfg=this%cfg,name=this%name,n=2*st+1)
       
    end subroutine ddadi_init
    
