@@ -3,7 +3,7 @@ module simulation
   use precision,         only: WP
   use geometry,          only: cfg
   use lpt_class,         only: lpt
-  use hypre_uns_class,   only: hypre_uns
+  use ddadi_class,       only: ddadi
   use hypre_str_class,   only: hypre_str
   use lowmach_class,     only: lowmach
   use timetracker_class, only: timetracker
@@ -15,8 +15,8 @@ module simulation
   private
   
   !> Get an LPT solver, a lowmach solver, and corresponding time tracker, plus a couple of linear solvers
-  type(hypre_uns),   public :: ps
-  type(hypre_str),   public :: vs
+  type(hypre_str),   public :: ps
+  type(ddadi),       public :: vs
   type(lowmach),     public :: fs
   type(lpt),         public :: lp
   type(timetracker), public :: time
@@ -100,7 +100,6 @@ contains
 
     ! Create a low Mach flow solver with bconds
     create_flow_solver: block
-      use hypre_uns_class, only: gmres_amg  
       use hypre_str_class, only: pcg_pfmg
       use lowmach_class,   only: dirichlet,clipped_neumann
       ! Create flow solver
@@ -115,13 +114,11 @@ contains
       ! Assign acceleration of gravity
       call param_read('Gravity',fs%gravity)
       ! Configure pressure solver
-      ps=hypre_uns(cfg=cfg,name='Pressure',method=gmres_amg,nst=7)
+      ps=hypre_str(cfg=cfg,name='Pressure',method=pcg_pfmg,nst=7)
       call param_read('Pressure iteration',ps%maxit)
       call param_read('Pressure tolerance',ps%rcvg)
       ! Configure implicit velocity solver
-      vs=hypre_str(cfg=cfg,name='Velocity',method=pcg_pfmg,nst=7)
-      call param_read('Implicit iteration',vs%maxit)
-      call param_read('Implicit tolerance',vs%rcvg)
+      vs=ddadi(cfg=cfg,name='Velocity',nst=7)
       ! Setup the solver
       call fs%setup(pressure_solver=ps,implicit_solver=vs)
     end block create_flow_solver
