@@ -5,6 +5,7 @@ module simulation
   use geometry,           only: cfg,D,get_VF
   use lowmach_class,      only: lowmach
   use fftsolver3d_class,  only: fftsolver3d
+  use ddadi_class,        only: ddadi
   use hypre_str_class,    only: hypre_str
   use lpt_class,          only: lpt
   use timetracker_class,  only: timetracker
@@ -18,8 +19,8 @@ module simulation
 
   !> Get an LPT solver, a lowmach solver, and corresponding time tracker
   type(lowmach),      public :: fs
-  type(fftsolver3d),    public :: ps
-  type(hypre_str),    public :: vs
+  type(fftsolver3d),  public :: ps
+  type(ddadi),        public :: vs
   type(lpt),          public :: lp
   type(timetracker),  public :: time
 
@@ -32,9 +33,6 @@ module simulation
   type(ensight)  :: ens_out
   type(partmesh) :: pmesh
   type(event)    :: ens_evt
-
-  !> Event for post-processing
-  type(event) :: ppevt
 
   !> Simulation monitor file
   type(monitor) :: mfile,cflfile,lptfile,tfile
@@ -62,55 +60,6 @@ module simulation
   type(timer) :: wt_total,wt_vel,wt_pres,wt_lpt,wt_rest
 
 contains
-
-
-    !> Specialized subroutine that outputs mean statistics
-   subroutine postproc()
-      use string,    only: str_medium
-      use mpi_f08,   only: MPI_ALLREDUCE,MPI_SUM
-      use parallel,  only: MPI_REAL_WP
-      implicit none
-!!$      integer :: iunit,ierr,i,j,k
-!!$      real(WP), dimension(:), allocatable :: Uavg,Uavg_,vol,vol_
-!!$      character(len=str_medium) :: filename,timestamp
-!!$      ! Allocate radial line storage
-!!$      allocate(Uavg (fs%cfg%jmin:fs%cfg%jmax)); Uavg =0.0_WP
-!!$      allocate(Uavg_(fs%cfg%jmin:fs%cfg%jmax)); Uavg_=0.0_WP
-!!$      allocate(vol_ (fs%cfg%jmin:fs%cfg%jmax)); vol_ =0.0_WP
-!!$      allocate(vol  (fs%cfg%jmin:fs%cfg%jmax)); vol  =0.0_WP
-!!$      ! Integrate all data over x and z
-!!$      do k=fs%cfg%kmin_,fs%cfg%kmax_
-!!$         do j=fs%cfg%jmin_,fs%cfg%jmax_
-!!$            do i=fs%cfg%imin_,fs%cfg%imax_
-!!$               vol_(j) = vol_(j)+fs%cfg%vol(i,j,k)
-!!$               Uavg_(j)=Uavg_(j)+fs%cfg%vol(i,j,k)*fs%U(i,j,k)
-!!$            end do
-!!$         end do
-!!$      end do
-!!$      ! All-reduce the data
-!!$      call MPI_ALLREDUCE( vol_, vol,fs%cfg%ny,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr)
-!!$      call MPI_ALLREDUCE(Uavg_,Uavg,fs%cfg%ny,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr)
-!!$      do j=fs%cfg%jmin,fs%cfg%jmax
-!!$         if (vol(j).gt.0.0_WP) then
-!!$            Uavg(j)=Uavg(j)/vol(j)
-!!$         else
-!!$            Uavg(j)=0.0_WP
-!!$         end if
-!!$      end do
-!!$      ! If root, print it out
-!!$      if (fs%cfg%amRoot) then
-!!$         filename='Uavg_'
-!!$         write(timestamp,'(es12.5)') time%t
-!!$         open(newunit=iunit,file=trim(adjustl(filename))//trim(adjustl(timestamp)),form='formatted',status='replace',access='stream',iostat=ierr)
-!!$         write(iunit,'(a12,3x,a12)') 'Height','Uavg'
-!!$         do j=fs%cfg%jmin,fs%cfg%jmax
-!!$            write(iunit,'(es12.5,3x,es12.5)') fs%cfg%ym(j),Uavg(j)
-!!$         end do
-!!$         close(iunit)
-!!$      end if
-!!$      ! Deallocate work arrays
-!!$      deallocate(Uavg,Uavg_,vol,vol_)
-    end subroutine postproc
 
 
   !> Compute massflow rate
@@ -230,9 +179,10 @@ contains
       ! Configure pressure solver
       ps=fftsolver3d(cfg=cfg,name='Pressure',nst=7)
       ! Configure implicit velocity solver
-      vs=hypre_str(cfg=cfg,name='Velocity',method=pcg_pfmg,nst=7)
-      call param_read('Implicit iteration',vs%maxit)
-      call param_read('Implicit tolerance',vs%rcvg)
+      !vs=hypre_str(cfg=cfg,name='Velocity',method=pcg_pfmg,nst=7)
+      !call param_read('Implicit iteration',vs%maxit)
+      !call param_read('Implicit tolerance',vs%rcvg)
+      vs=ddadi(cfg=cfg,name='Velocity',nst=7)
       ! Setup the solver
       call fs%setup(pressure_solver=ps,implicit_solver=vs)
     end block create_flow_solver
@@ -275,7 +225,6 @@ contains
       logical :: overlap
       ! Create solver
       lp=lpt(cfg=cfg,name='LPT')
-      ! Get pipe diameter from input
       ! Get mean volume fraction from input
       call param_read('Particle volume fraction',VFavg)
       ! Get drag model from input
@@ -544,6 +493,7 @@ contains
       call lptfile%add_column(lp_dt,'Particle dt')
       call lptfile%add_column(lp%VFmean,'VFp mean')
       call lptfile%add_column(lp%VFmax,'VFp max')
+      call lptfile%add_column(lp%VFvar,'VFp var')
       call lptfile%add_column(lp%np,'Particle number')
       call lptfile%add_column(lp%ncol,'Collision number')
       call lptfile%add_column(lp%Umin,'Particle Umin')
@@ -570,16 +520,6 @@ contains
       call tfile%add_column(wt_rest%percent,'Rest [%]')
       call tfile%write()
     end block create_monitor
-
-
-    ! Create a specialized post-processing file
-    create_postproc: block
-      ! Create event for data postprocessing
-      ppevt=event(time=time,name='Postproc output')
-      call param_read('Postproc output period',ppevt%tper)
-      ! Perform the output
-      if (ppevt%occurs()) call postproc()
-    end block create_postproc
 
   end subroutine simulation_init
 
@@ -638,7 +578,7 @@ contains
          fs%rho=rho*(1.0_WP-lp%VF)
          dRHOdt=(fs%RHO-fs%RHOold)/time%dtmid
          ! Compute PTKE and store source terms
-         call lp%get_ptke(dt=time%dtmid,Ui=Ui,Vi=Vi,Wi=Wi,visc=fs%visc,rho=fs%rho,srcU=tmp1,srcV=tmp2,srcW=tmp3)
+         call lp%get_ptke(dt=time%dtmid,Ui=Ui,Vi=Vi,Wi=Wi,visc=fs%visc,rho=rho0,srcU=tmp1,srcV=tmp2,srcW=tmp3)
          srcUlp=srcUlp+tmp1
          srcVlp=srcVlp+tmp2
          srcWlp=srcWlp+tmp3
@@ -714,7 +654,7 @@ contains
           fs%V=2.0_WP*fs%V-fs%Vold+resV
           fs%W=2.0_WP*fs%W-fs%Wold+resW
 
-!!$          ! Apply IB forcing to enforce BC at the pipe walls
+!!$          ! Apply IB direct forcing to enforce BC at the pipe walls
 !!$          ibforcing: block
 !!$            integer :: i,j,k
 !!$            do k=fs%cfg%kmin_,fs%cfg%kmax_
@@ -782,9 +722,6 @@ contains
           end block update_pmesh
           call ens_out%write_data(time%t)
        end if
-
-       ! Specialized post-processing
-       if (ppevt%occurs()) call postproc()
 
        ! Perform and output monitoring
        call fs%get_max()
