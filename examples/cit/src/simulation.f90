@@ -160,7 +160,7 @@ contains
       use mathtools, only: Pi,twoPi
       use mpi_f08,  only: MPI_SUM,MPI_ALLREDUCE,MPI_INTEGER
       use parallel, only: MPI_REAL_WP
-      real(WP) :: VFavg,Vol_,sumVolp,Tp,dp
+      real(WP) :: VFavg,Vol_,sumVolp,Tp,dp,up,amp
       integer :: i,j,k,ii,jj,kk,nn,ip,jp,kp,np,offset,ierr
       integer, dimension(:,:,:), allocatable :: npic      !< Number of particle in cell
       integer, dimension(:,:,:,:), allocatable :: ipic    !< Index of particle in cell
@@ -176,6 +176,9 @@ contains
       call param_read('Particle density',lp%rho)
       ! Get particle diameter from input
       call param_read('Particle diameter',dp)
+      ! Get particle velocity from input
+      call param_read('Particle u velocity',up,default=0.0_WP)
+      call param_read('Particle fluctuations',amp,default=0.0_WP)
       ! Maximum timestep size used for particles
       call param_read('Particle timestep size',lp_dt_max,default=huge(1.0_WP))
       lp_dt=lp_dt_max
@@ -240,6 +243,9 @@ contains
          lp%p(i)%T=Tp
          ! Give zero velocity
          lp%p(i)%vel=0.0_WP
+         lp%p(i)%vel(1)=up
+         if (amp.gt.0.0_WP) lp%p(i)%vel=lp%p(i)%vel+[random_uniform(-amp,amp),random_uniform(-amp,amp),random_uniform(-amp,amp)]
+
          ! Give zero collision force
          lp%p(i)%Acol=0.0_WP
          lp%p(i)%Tcol=0.0_WP
