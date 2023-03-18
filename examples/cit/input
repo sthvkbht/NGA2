@@ -35,4 +35,4 @@ Friction coefficient        : 0.1
 Ensight output period : 200e-5
 
 # Postprocessing output
-Postproc output period : 200e-5
+Postproc output period : .01
