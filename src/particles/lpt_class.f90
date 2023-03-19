@@ -4,7 +4,7 @@ module lpt_class
   use precision,      only: WP
   use string,         only: str_medium
   use config_class,   only: config
-  use diag_class,     only: diag
+  use ddadi_class,    only: ddadi
   use mpi_f08,        only: MPI_Datatype,MPI_INTEGER8,MPI_INTEGER,MPI_DOUBLE_PRECISION
   implicit none
   private
@@ -52,7 +52,7 @@ module lpt_class
      ! This is our underlying config
      class(config), pointer :: cfg                       !< This is the config the solver is build for
 
-     type(diag) :: tridiag                               !< Tridiagonal solver for implicit filter
+     type(ddadi) :: implicit                             !< Implicit solver for filtering
 
      ! This is the name of the solver
      character(len=str_medium) :: name='UNNAMED_LPT'     !< Solver name (default=UNNAMED_LPT)
@@ -167,9 +167,6 @@ contains
     ! Point to pgrid object
     self%cfg=>cfg
 
-    ! Create tridiagonal solver object
-    self%tridiag=diag(cfg=self%cfg,name='Tridiagonal',n=3)
-
     ! Allocate variables
     allocate(self%np_proc(1:self%cfg%nproc)); self%np_proc=0
     self%np_=0; self%np=0
@@ -182,12 +179,6 @@ contains
     ! Allocate VF and PTKE on cfg mesh
     allocate(self%VF  (self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%VF=0.0_WP
     allocate(self%ptke(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%ptke=0.0_WP
-
-    ! Set filter width to zero by default
-    self%filter_width=0.0_WP
-
-    ! Solve implicitly by default
-    self%implicit_filter=.true.
 
     ! Set default drag
     self%drag_model='Schiller-Naumann'
@@ -277,6 +268,23 @@ contains
        self%div_z=0.0_WP
        self%grd_z=0.0_WP
     end if
+
+    ! Create implicit solver object for filtering
+    self%implicit=ddadi(cfg=self%cfg,name='Filter',nst=7)
+    self%implicit%stc(1,:)=[ 0, 0, 0]
+    self%implicit%stc(2,:)=[+1, 0, 0]
+    self%implicit%stc(3,:)=[-1, 0, 0]
+    self%implicit%stc(4,:)=[ 0,+1, 0]
+    self%implicit%stc(5,:)=[ 0,-1, 0]
+    self%implicit%stc(6,:)=[ 0, 0,+1]
+    self%implicit%stc(7,:)=[ 0, 0,-1]
+    call self%implicit%init()
+
+    ! Set filter width to zero by default
+    self%filter_width=0.0_WP
+
+    ! Solve implicitly by default
+    self%implicit_filter=.true.
 
     ! Generate a wall distance/norm function
     allocate(self%Wdist(  self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_))
@@ -1263,55 +1271,34 @@ contains
     ! Recompute filter coeff and number of explicit steps needed
     filter_coeff=0.5_WP*(this%filter_width/(2.0_WP*sqrt(2.0_WP*log(2.0_WP))))**2
 
-    if (this%implicit_filter) then  !< Apply filter implicitly via approximate factorization
-       ! Inverse in X-direction
-       do k=this%cfg%kmin_,this%cfg%kmax_
-          do j=this%cfg%jmin_,this%cfg%jmax_
-             do i=this%cfg%imin_,this%cfg%imax_
-                this%tridiag%Ax(j,k,i,-1) = - this%div_x(0,i,j,k) * filter_coeff * this%grd_x(-1,i,j,k)
-                this%tridiag%Ax(j,k,i, 0) = 1.0_WP - (this%div_x(0,i,j,k) * filter_coeff * this%grd_x(0,i,j,k) &
-                     + this%div_x(1,i,j,k) * filter_coeff * this%grd_x(-1,i+1,j,k))
-                this%tridiag%Ax(j,k,i,+1) = - this%div_x(1,i,j,k) * filter_coeff * this%grd_x(0,i+1,j,k)
-                this%tridiag%Rx(j,k,i) = A(i,j,k)
+    if (this%implicit_filter) then  !< Apply filter implicitly
+       if (.not.this%implicit%setup_done) then
+          ! Prepare diffusive operator (only need to do this once)
+          do k=this%cfg%kmin_,this%cfg%kmax_
+             do j=this%cfg%jmin_,this%cfg%jmax_
+                do i=this%cfg%imin_,this%cfg%imax_
+                   this%implicit%opr(1,i,j,k)=1.0_WP-(this%div_x(+1,i,j,k)*filter_coeff*this%grd_x(-1,i+1,j,k)+&
+                   &                                  this%div_x( 0,i,j,k)*filter_coeff*this%grd_x( 0,i  ,j,k)+&
+                   &                                  this%div_y(+1,i,j,k)*filter_coeff*this%grd_y(-1,i,j+1,k)+&
+                   &                                  this%div_y( 0,i,j,k)*filter_coeff*this%grd_y( 0,i,j  ,k)+&
+                   &                                  this%div_z(+1,i,j,k)*filter_coeff*this%grd_z(-1,i,j,k+1)+&
+                   &                                  this%div_z( 0,i,j,k)*filter_coeff*this%grd_z( 0,i,j,k  ))
+                   this%implicit%opr(2,i,j,k)=      -(this%div_x(+1,i,j,k)*filter_coeff*this%grd_x( 0,i+1,j,k))
+                   this%implicit%opr(3,i,j,k)=      -(this%div_x( 0,i,j,k)*filter_coeff*this%grd_x(-1,i  ,j,k))
+                   this%implicit%opr(4,i,j,k)=      -(this%div_y(+1,i,j,k)*filter_coeff*this%grd_y( 0,i,j+1,k))
+                   this%implicit%opr(5,i,j,k)=      -(this%div_y( 0,i,j,k)*filter_coeff*this%grd_y(-1,i,j  ,k))
+                   this%implicit%opr(6,i,j,k)=      -(this%div_z(+1,i,j,k)*filter_coeff*this%grd_z( 0,i,j,k+1))
+                   this%implicit%opr(7,i,j,k)=      -(this%div_z( 0,i,j,k)*filter_coeff*this%grd_z(-1,i,j,k  ))
+                end do
              end do
           end do
-       end do
-       call this%tridiag%linsol_x()         
-       ! Inverse in Y-direction
-       do k=this%cfg%kmin_,this%cfg%kmax_
-          do j=this%cfg%jmin_,this%cfg%jmax_
-             do i=this%cfg%imin_,this%cfg%imax_
-                this%tridiag%Ay(i,k,j,-1) = - this%div_y(0,i,j,k) * filter_coeff * this%grd_y(-1,i,j,k)
-                this%tridiag%Ay(i,k,j, 0) = 1.0_WP - (this%div_y(0,i,j,k)* filter_coeff * this%grd_y(0,i,j,k) &
-                     + this%div_y(1,i,j,k) * filter_coeff * this%grd_y(-1,i,j+1,k))
-                this%tridiag%Ay(i,k,j,+1) = - this%div_y(1,i,j,k) * filter_coeff * this%grd_y(0,i,j+1,k)
-                this%tridiag%Ry(i,k,j) = this%tridiag%Rx(j,k,i)
-             end do
-          end do
-       end do
-       call this%tridiag%linsol_y()
-       ! Inverse in Z-direction
-       do k=this%cfg%kmin_,this%cfg%kmax_
-          do j=this%cfg%jmin_,this%cfg%jmax_
-             do i=this%cfg%imin_,this%cfg%imax_
-                this%tridiag%Az(i,j,k,-1) = - this%div_z(0,i,j,k) * filter_coeff * this%grd_z(-1,i,j,k)
-                this%tridiag%Az(i,j,k, 0) = 1.0_WP - (this%div_z(0,i,j,k) * filter_coeff * this%grd_z(0,i,j,k) &
-                     + this%div_z(1,i,j,k) * filter_coeff * this%grd_z(-1,i,j,k+1))
-                this%tridiag%Az(i,j,k,+1) = - this%div_z(1,i,j,k) * filter_coeff * this%grd_z(0,i,j,k+1)
-                this%tridiag%Rz(i,j,k) = this%tridiag%Ry(i,k,j)
-             end do
-          end do
-       end do
-       call this%tridiag%linsol_z()        
-       ! Update A
-       do k=this%cfg%kmin_,this%cfg%kmax_
-          do j=this%cfg%jmin_,this%cfg%jmax_
-             do i=this%cfg%imin_,this%cfg%imax_
-                A(i,j,k)=this%tridiag%Rz(i,j,k)
-             end do
-          end do
-       end do
-       ! Sync A
+       end if
+       ! Solve the linear system
+       call this%implicit%setup()
+       this%implicit%rhs=A
+       this%implicit%sol=0.0_WP
+       call this%implicit%solve()
+       A=this%implicit%sol
        call this%cfg%sync(A)
        
     else  !< Apply filter explicitly
