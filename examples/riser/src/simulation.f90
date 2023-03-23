@@ -222,7 +222,7 @@ contains
       integer, dimension(:,:,:), allocatable :: npic      !< Number of particle in cell
       integer, dimension(:,:,:,:), allocatable :: ipic    !< Index of particle in cell
       character(len=str_medium) :: timestamp
-      logical :: overlap
+      logical :: overlap,outside
       ! Create solver
       lp=lpt(cfg=cfg,name='LPT')
       ! Get mean volume fraction from input
@@ -289,16 +289,20 @@ contains
          allocate(ipic(1:40,lp%cfg%imino_:lp%cfg%imaxo_,lp%cfg%jmino_:lp%cfg%jmaxo_,lp%cfg%kmino_:lp%cfg%kmaxo_)); ipic=0
          ! Distribute particles
          sumVolp=0.0_WP; meand=0.0_WP
-         i=1
-         do while (i.le.np)
+         do i=1,np
             ! Set the diameter
             lp%p(i)%d=dp(i)
             ! Give position (avoid overlap)
             overlap=.true.
             do while (overlap)
-               lp%p(i)%pos=[random_uniform(lp%cfg%x(lp%cfg%imin_),lp%cfg%x(lp%cfg%imax_+1)-dmax),&
-                    &       random_uniform(lp%cfg%y(lp%cfg%jmin_),lp%cfg%y(lp%cfg%jmax_+1)-dmax),&
-                    &       random_uniform(lp%cfg%z(lp%cfg%kmin_),lp%cfg%z(lp%cfg%kmax_+1)-dmax)]
+               outside=.true.
+               do while (outside)
+                  lp%p(i)%pos=[random_uniform(lp%cfg%x(lp%cfg%imin_),lp%cfg%x(lp%cfg%imax_+1)-dmax),&
+                       &       random_uniform(lp%cfg%y(lp%cfg%jmin_),lp%cfg%y(lp%cfg%jmax_+1)-dmax),&
+                       &       random_uniform(lp%cfg%z(lp%cfg%kmin_),lp%cfg%z(lp%cfg%kmax_+1)-dmax)]
+                  if (lp%cfg%nz.eq.1) lp%p(i)%pos(3)=0.0_WP
+                  if (sqrt(sum(lp%p(i)%pos(2:3))**2).lt.0.5*(D-lp%p(i)%d)) outside=.false.
+               end do
                lp%p(i)%ind=lp%cfg%get_ijk_global(lp%p(i)%pos,[lp%cfg%imin,lp%cfg%jmin,lp%cfg%kmin])
                overlap=.false.
                do kk=lp%p(i)%ind(3)-1,lp%p(i)%ind(3)+1
@@ -312,28 +316,23 @@ contains
                   end do
                end do
             end do
-            ! Check if particle is within the pipe
-            r=sqrt(lp%p(i)%pos(2)**2+lp%p(i)%pos(3)**2)
-            if (r.le.0.5_WP*(D-lp%p(i)%d)) then
-               ! Activate the particle
-               lp%p(i)%flag=0
-               ip=lp%p(i)%ind(1); jp=lp%p(i)%ind(2); kp=lp%p(i)%ind(3)
-               npic(ip,jp,kp)=npic(ip,jp,kp)+1
-               ipic(npic(ip,jp,kp),ip,jp,kp)=i
-               ! Set the temperature
-               lp%p(i)%T=Tp
-               ! Give zero velocity
-               lp%p(i)%vel=0.0_WP
-               ! Give zero collision force
-               lp%p(i)%Acol=0.0_WP
-               lp%p(i)%Tcol=0.0_WP
-               ! Give zero dt
-               lp%p(i)%dt=0.0_WP
-               ! Sum up volume
-               sumVolp=sumVolp+Pi/6.0_WP*lp%p(i)%d**3
-               meand=meand+lp%p(i)%d
-               i=i+1
-            end if
+            ! Activate the particle
+            lp%p(i)%flag=0
+            ip=lp%p(i)%ind(1); jp=lp%p(i)%ind(2); kp=lp%p(i)%ind(3)
+            npic(ip,jp,kp)=npic(ip,jp,kp)+1
+            ipic(npic(ip,jp,kp),ip,jp,kp)=i
+            ! Set the temperature
+            lp%p(i)%T=Tp
+            ! Give zero velocity
+            lp%p(i)%vel=0.0_WP
+            ! Give zero collision force
+            lp%p(i)%Acol=0.0_WP
+            lp%p(i)%Tcol=0.0_WP
+            ! Give zero dt
+            lp%p(i)%dt=0.0_WP
+            ! Sum up volume
+            sumVolp=sumVolp+Pi/6.0_WP*lp%p(i)%d**3
+            meand=meand+lp%p(i)%d
          end do
          deallocate(dp,npic,ipic)
          call lp%sync()
