@@ -267,7 +267,7 @@ contains
          do k=lp%cfg%kmin_,lp%cfg%kmax_
             do j=lp%cfg%jmin_,lp%cfg%jmax_
                do i=lp%cfg%imin_,fs%cfg%imax_
-                  Vol_=Vol_+lp%cfg%dx(i)*lp%cfg%dy(j)*lp%cfg%dz(k)
+                  Vol_=Vol_+lp%cfg%vol(i,j,k)*lp%cfg%VF(i,j,k)
                end do
             end do
          end do
@@ -289,7 +289,8 @@ contains
          allocate(ipic(1:40,lp%cfg%imino_:lp%cfg%imaxo_,lp%cfg%jmino_:lp%cfg%jmaxo_,lp%cfg%kmino_:lp%cfg%kmaxo_)); ipic=0
          ! Distribute particles
          sumVolp=0.0_WP; meand=0.0_WP
-         do i=1,np
+         i=1
+         do while (i.le.np)
             ! Set the diameter
             lp%p(i)%d=dp(i)
             ! Give position (avoid overlap)
@@ -331,8 +332,7 @@ contains
                ! Sum up volume
                sumVolp=sumVolp+Pi/6.0_WP*lp%p(i)%d**3
                meand=meand+lp%p(i)%d
-            else
-               lp%p(i)%flag=1
+               i=i+1
             end if
          end do
          deallocate(dp,npic,ipic)
