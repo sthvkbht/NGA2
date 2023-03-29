@@ -82,9 +82,9 @@ module lpt_class
      
      ! Collisional parameters
      real(WP) :: tau_col                                 !< Characteristic collision time scale
-     real(WP) :: e_n                                     !< Normal restitution coefficient
-     real(WP) :: e_w                                     !< Wall restitution coefficient
-     real(WP) :: mu_f                                    !< Friction coefficient
+     real(WP) :: e_n=1.0_WP                              !< Normal restitution coefficient
+     real(WP) :: e_w=1.0_WP                              !< Wall restitution coefficient
+     real(WP) :: mu_f=0.0_WP                             !< Friction coefficient
      real(WP) :: clip_col=0.2_WP                         !< Maximum allowable overlap
      real(WP), dimension(:,:,:),   allocatable :: Wdist  !< Signed wall distance - naive for now (could be redone with FMM)
      real(WP), dimension(:,:,:,:), allocatable :: Wnorm  !< Wall normal function - naive for now (could be redone with FMM)
@@ -182,11 +182,6 @@ contains
 
     ! Set default drag
     self%drag_model='Schiller-Naumann'
-
-    ! Set default collision parameters
-    self%mu_f=0.0_WP
-    self%e_n=1.0_WP
-    self%e_w=1.0_WP
 
     ! Allocate finite volume divergence operators
     allocate(self%div_x(0:+1,self%cfg%imin_:self%cfg%imax_,self%cfg%jmin_:self%cfg%jmax_,self%cfg%kmin_:self%cfg%kmax_)) !< Cell-centered
