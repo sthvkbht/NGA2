@@ -164,7 +164,6 @@ contains
       integer :: i,j,k,ii,jj,kk,nn,ip,jp,kp,np,offset,ierr
       integer, dimension(:,:,:), allocatable :: npic      !< Number of particle in cell
       integer, dimension(:,:,:,:), allocatable :: ipic    !< Index of particle in cell
-      character(len=str_medium) :: timestamp
       logical :: overlap
       ! Create solver
       lp=lpt(cfg=cfg,name='LPT')
