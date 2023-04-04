@@ -12,7 +12,7 @@ module sph_class
    public :: sph
 
 
-   ! List of known available smoothiing kernels
+   ! List of known available smoothing kernels
    integer, parameter, public :: cubic=1
    integer, parameter, public :: quintic=2
    integer, parameter, public :: gaussian=3
@@ -130,7 +130,7 @@ module sph_class
 contains
    
    
-  ! Smoothing kernel
+  ! Smoothing kernel (not normalized)
   function W(d,h,kernel,rmax)
     implicit none
     real(WP), intent(in) :: d,h
@@ -162,7 +162,7 @@ contains
   end function W
 
 
-  ! Gradient of the smoothing kernel
+  ! Gradient of the smoothing kernel (not normalized)
   function gradW(d,h,x1,x2,kernel)
     implicit none
     real(WP), dimension(3), intent(in) :: x1,x2
@@ -210,7 +210,7 @@ contains
       self%cfg=>cfg
       
       ! Set default smoothing length based on underlying mesh
-      self%h=self%cfg%min_meshsize/3.0_WP
+      self%h=self%cfg%min_meshsize/2.0_WP
       self%hi=1.0_WP/self%h
       self%rmax=2.0_WP*self%h
       
