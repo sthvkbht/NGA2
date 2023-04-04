@@ -201,7 +201,7 @@ contains
       type(sph) :: self
       class(config), target, intent(in) :: cfg
       character(len=*), optional :: name
-      integer :: i,j,k
+      integer :: i,j,k,l
       
       ! Set the name for the solver
       if (present(name)) self%name=trim(adjustl(name))
@@ -238,124 +238,66 @@ contains
           end do
        end do
     end do
-    ! Second pass to compute local distance
-    do k=self%cfg%kmino_,self%cfg%kmaxo_
-       do j=self%cfg%jmino_,self%cfg%jmaxo_
-          do i=self%cfg%imino_+1,self%cfg%imaxo_
-             if (self%Wdist(i,j,k)*self%Wdist(i-1,j,k).lt.0.0_WP) then
-                ! There is a wall at x(i)
-                if (abs(self%cfg%xm(i  )-self%cfg%x(i)).lt.abs(self%Wdist(i  ,j,k))) then
-                   self%Wdist(i  ,j,k)=sign(self%cfg%xm(i  )-self%cfg%x(i),self%Wdist(i  ,j,k))
-                   self%Wnorm(:,i  ,j,k)=[self%cfg%VF(i,j,k)-self%cfg%VF(i-1,j,k),0.0_WP,0.0_WP]
+    ! Second pass to compute local distance (get 2 closest cells)
+    do l=1,2
+       do k=self%cfg%kmino_,self%cfg%kmaxo_
+          do j=self%cfg%jmino_,self%cfg%jmaxo_
+             do i=self%cfg%imino_+l,self%cfg%imaxo_
+                if (self%Wdist(i,j,k)*self%Wdist(i-l,j,k).lt.0.0_WP) then
+                   ! There is a wall at x(i)
+                   if (abs(self%cfg%xm(i  )-self%cfg%x(i-l+1)).lt.abs(self%Wdist(i  ,j,k))) then
+                      self%Wdist(i  ,j,k)=sign(self%cfg%xm(i  )-self%cfg%x(i-l+1),self%Wdist(i  ,j,k))
+                      self%Wnorm(:,i  ,j,k)=[self%cfg%VF(i,j,k)-self%cfg%VF(i-l,j,k),0.0_WP,0.0_WP]
+                   end if
+                   if (abs(self%cfg%xm(i-l)-self%cfg%x(i)).lt.abs(self%Wdist(i-l,j,k))) then
+                      self%Wdist(i-l,j,k)=sign(self%cfg%xm(i-l)-self%cfg%x(i),self%Wdist(i-l,j,k))
+                      self%Wnorm(:,i-l,j,k)=[self%cfg%VF(i,j,k)-self%cfg%VF(i-l,j,k),0.0_WP,0.0_WP]
+                   end if
                 end if
-                if (abs(self%cfg%xm(i-1)-self%cfg%x(i)).lt.abs(self%Wdist(i-1,j,k))) then
-                   self%Wdist(i-1,j,k)=sign(self%cfg%xm(i-1)-self%cfg%x(i),self%Wdist(i-1,j,k))
-                   self%Wnorm(:,i-1,j,k)=[self%cfg%VF(i,j,k)-self%cfg%VF(i-1,j,k),0.0_WP,0.0_WP]
-                end if
-             end if
+             end do
           end do
        end do
-    end do
-    call self%cfg%sync(self%Wdist)
-    call self%cfg%sync(self%Wnorm)
-    do k=self%cfg%kmino_,self%cfg%kmaxo_
-       do j=self%cfg%jmino_+1,self%cfg%jmaxo_
-          do i=self%cfg%imino_,self%cfg%imaxo_
-             if (self%Wdist(i,j,k)*self%Wdist(i,j-1,k).lt.0.0_WP) then
-                ! There is a wall at y(j)
-                if (abs(self%cfg%ym(j  )-self%cfg%y(j)).lt.abs(self%Wdist(i,j  ,k))) then
-                   self%Wdist(i,j  ,k)=sign(self%cfg%ym(j  )-self%cfg%y(j),self%Wdist(i,j  ,k))
-                   self%Wnorm(:,i,j  ,k)=[0.0_WP,self%cfg%VF(i,j,k)-self%cfg%VF(i,j-1,k),0.0_WP]
+       do k=self%cfg%kmino_,self%cfg%kmaxo_
+          do j=self%cfg%jmino_+l,self%cfg%jmaxo_
+             do i=self%cfg%imino_,self%cfg%imaxo_
+                if (self%Wdist(i,j,k)*self%Wdist(i,j-l,k).lt.0.0_WP) then
+                   ! There is a wall at y(j)
+                   if (abs(self%cfg%ym(j  )-self%cfg%y(j-l+1)).lt.abs(self%Wdist(i,j  ,k))) then
+                      self%Wdist(i,j  ,k)=sign(self%cfg%ym(j  )-self%cfg%y(j-l+1),self%Wdist(i,j  ,k))
+                      self%Wnorm(:,i,j  ,k)=[0.0_WP,self%cfg%VF(i,j,k)-self%cfg%VF(i,j-l,k),0.0_WP]
+                   end if
+                   if (abs(self%cfg%ym(j-l)-self%cfg%y(j)).lt.abs(self%Wdist(i,j-l,k))) then
+                      self%Wdist(i,j-l,k)=sign(self%cfg%ym(j-l)-self%cfg%y(j),self%Wdist(i,j-l,k))
+                      self%Wnorm(:,i,j-l,k)=[0.0_WP,self%cfg%VF(i,j,k)-self%cfg%VF(i,j-l,k),0.0_WP]
+                   end if
                 end if
-                if (abs(self%cfg%ym(j-1)-self%cfg%y(j)).lt.abs(self%Wdist(i,j-1,k))) then
-                   self%Wdist(i,j-1,k)=sign(self%cfg%ym(j-1)-self%cfg%y(j),self%Wdist(i,j-1,k))
-                   self%Wnorm(:,i,j-1,k)=[0.0_WP,self%cfg%VF(i,j,k)-self%cfg%VF(i,j-1,k),0.0_WP]
-                end if
-             end if
+             end do
           end do
        end do
-    end do
-    call self%cfg%sync(self%Wdist)
-    call self%cfg%sync(self%Wnorm)
-    do k=self%cfg%kmino_+1,self%cfg%kmaxo_
-       do j=self%cfg%jmino_,self%cfg%jmaxo_
-          do i=self%cfg%imino_,self%cfg%imaxo_
-             if (self%Wdist(i,j,k)*self%Wdist(i,j,k-1).lt.0.0_WP) then
-                ! There is a wall at z(k)
-                if (abs(self%cfg%zm(k  )-self%cfg%z(k)).lt.abs(self%Wdist(i,j,k  ))) then
-                   self%Wdist(i,j,k  )=sign(self%cfg%zm(k  )-self%cfg%z(k),self%Wdist(i,j,k  ))
-                   self%Wnorm(:,i,j,k  )=[0.0_WP,0.0_WP,self%cfg%VF(i,j,k)-self%cfg%VF(i,j,k-1)]
+       do k=self%cfg%kmino_+l,self%cfg%kmaxo_
+          do j=self%cfg%jmino_,self%cfg%jmaxo_
+             do i=self%cfg%imino_,self%cfg%imaxo_
+                if (self%Wdist(i,j,k)*self%Wdist(i,j,k-l).lt.0.0_WP) then
+                   ! There is a wall at z(k)
+                   if (abs(self%cfg%zm(k  )-self%cfg%z(k-l+1)).lt.abs(self%Wdist(i,j,k  ))) then
+                      self%Wdist(i,j,k  )=sign(self%cfg%zm(k  )-self%cfg%z(k-l+1),self%Wdist(i,j,k  ))
+                      self%Wnorm(:,i,j,k  )=[0.0_WP,0.0_WP,self%cfg%VF(i,j,k)-self%cfg%VF(i,j,k-l)]
+                   end if
+                   if (abs(self%cfg%zm(k-l)-self%cfg%z(k)).lt.abs(self%Wdist(i,j,k-l))) then
+                      self%Wdist(i,j,k-l)=sign(self%cfg%zm(k-l)-self%cfg%z(k),self%Wdist(i,j,k-l))
+                      self%Wnorm(:,i,j,k-l)=[0.0_WP,0.0_WP,self%cfg%VF(i,j,k)-self%cfg%VF(i,j,k-l)]
+                   end if
                 end if
-                if (abs(self%cfg%zm(k-1)-self%cfg%z(k)).lt.abs(self%Wdist(i,j,k-1))) then
-                   self%Wdist(i,j,k-1)=sign(self%cfg%zm(k-1)-self%cfg%z(k),self%Wdist(i,j,k-1))
-                   self%Wnorm(:,i,j,k-1)=[0.0_WP,0.0_WP,self%cfg%VF(i,j,k)-self%cfg%VF(i,j,k-1)]
-                end if
-             end if
-          end do
-       end do
-    end do
-    ! Third pass to compute local distance one more cell away
-    do k=self%cfg%kmino_,self%cfg%kmaxo_
-       do j=self%cfg%jmino_,self%cfg%jmaxo_
-          do i=self%cfg%imino_+2,self%cfg%imaxo_
-             if (self%Wdist(i,j,k)*self%Wdist(i-2,j,k).lt.0.0_WP) then
-                ! There is a wall at x(i)
-                if (abs(self%cfg%xm(i  )-self%cfg%x(i-1)).lt.abs(self%Wdist(i  ,j,k))) then
-                   self%Wdist(i  ,j,k)=sign(self%cfg%xm(i  )-self%cfg%x(i-1),self%Wdist(i  ,j,k))
-                   self%Wnorm(:,i  ,j,k)=[self%cfg%VF(i,j,k)-self%cfg%VF(i-2,j,k),0.0_WP,0.0_WP]
-                end if
-                if (abs(self%cfg%xm(i-2)-self%cfg%x(i)).lt.abs(self%Wdist(i-2,j,k))) then
-                   self%Wdist(i-2,j,k)=sign(self%cfg%xm(i-2)-self%cfg%x(i),self%Wdist(i-2,j,k))
-                   self%Wnorm(:,i-2,j,k)=[self%cfg%VF(i,j,k)-self%cfg%VF(i-2,j,k),0.0_WP,0.0_WP]
-                end if
-             end if
-          end do
-       end do
-    end do
-    call self%cfg%sync(self%Wdist)
-    call self%cfg%sync(self%Wnorm)
-    do k=self%cfg%kmino_,self%cfg%kmaxo_
-       do j=self%cfg%jmino_+2,self%cfg%jmaxo_
-          do i=self%cfg%imino_,self%cfg%imaxo_
-             if (self%Wdist(i,j,k)*self%Wdist(i,j-2,k).lt.0.0_WP) then
-                ! There is a wall at y(j)
-                if (abs(self%cfg%ym(j  )-self%cfg%y(j-1)).lt.abs(self%Wdist(i,j  ,k))) then
-                   self%Wdist(i,j  ,k)=sign(self%cfg%ym(j  )-self%cfg%y(j-1),self%Wdist(i,j  ,k))
-                   self%Wnorm(:,i,j  ,k)=[0.0_WP,self%cfg%VF(i,j,k)-self%cfg%VF(i,j-2,k),0.0_WP]
-                end if
-                if (abs(self%cfg%ym(j-2)-self%cfg%y(j)).lt.abs(self%Wdist(i,j-2,k))) then
-                   self%Wdist(i,j-2,k)=sign(self%cfg%ym(j-2)-self%cfg%y(j),self%Wdist(i,j-2,k))
-                   self%Wnorm(:,i,j-2,k)=[0.0_WP,self%cfg%VF(i,j,k)-self%cfg%VF(i,j-2,k),0.0_WP]
-                end if
-             end if
-          end do
-       end do
-    end do
-    call self%cfg%sync(self%Wdist)
-    call self%cfg%sync(self%Wnorm)
-    do k=self%cfg%kmino_+2,self%cfg%kmaxo_
-       do j=self%cfg%jmino_,self%cfg%jmaxo_
-          do i=self%cfg%imino_,self%cfg%imaxo_
-             if (self%Wdist(i,j,k)*self%Wdist(i,j,k-2).lt.0.0_WP) then
-                ! There is a wall at z(k)
-                if (abs(self%cfg%zm(k  )-self%cfg%z(k-1)).lt.abs(self%Wdist(i,j,k  ))) then
-                   self%Wdist(i,j,k  )=sign(self%cfg%zm(k  )-self%cfg%z(k-1),self%Wdist(i,j,k  ))
-                   self%Wnorm(:,i,j,k  )=[0.0_WP,0.0_WP,self%cfg%VF(i,j,k)-self%cfg%VF(i,j,k-2)]
-                end if
-                if (abs(self%cfg%zm(k-2)-self%cfg%z(k)).lt.abs(self%Wdist(i,j,k-2))) then
-                   self%Wdist(i,j,k-2)=sign(self%cfg%zm(k-2)-self%cfg%z(k),self%Wdist(i,j,k-2))
-                   self%Wnorm(:,i,j,k-2)=[0.0_WP,0.0_WP,self%cfg%VF(i,j,k)-self%cfg%VF(i,j,k-2)]
-                end if
-             end if
+             end do
           end do
        end do
     end do
     call self%cfg%sync(self%Wdist)
     call self%cfg%sync(self%Wnorm)
 
-      ! Log/screen output
-      logging: block
-        use, intrinsic :: iso_fortran_env, only: output_unit
+    ! Log/screen output
+    logging: block
+      use, intrinsic :: iso_fortran_env, only: output_unit
         use param,    only: verbose
         use messager, only: log
         use string,   only: str_long
