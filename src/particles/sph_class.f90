@@ -374,7 +374,7 @@ contains
         do i=1,this%np_
            if (this%p(i)%id.eq.0) cycle
            dist=this%cfg%get_scalar(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=this%Wdist,bc='d')
-           if (dist.lt.this%rmax) nimg=nimg+2
+           if (dist.lt.this%rmax) nimg=nimg+1
         end do
         do i=1,this%ng_
            if (this%g(i)%id.eq.0) cycle
