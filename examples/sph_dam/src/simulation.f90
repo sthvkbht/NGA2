@@ -78,7 +78,7 @@ contains
                n=n+1
                ! Give position
                ss%p(n)%pos(1)=real(i,WP)*dx-0.5_WP*Lpx
-               ss%p(n)%pos(2)=ss%cfg%y(ss%cfg%jmin)+(real(j-1,WP)+0.15_WP)*dy
+               ss%p(n)%pos(2)=ss%cfg%y(ss%cfg%jmin)+real(j,WP)*dy
                ss%p(n)%pos(3)=0.0_WP
                ! Give id
                ss%p(n)%id=n
@@ -133,6 +133,7 @@ contains
       call param_read('Ensight output period',ens_evt%tper)
       ! Add variables to output
       call ens_out%add_particle('particles',pmesh)
+      call ens_out%add_scalar('Wdist',ss%wdist)
       ! Output to ensight
       if (ens_evt%occurs()) call ens_out%write_data(time%t)
     end block create_ensight

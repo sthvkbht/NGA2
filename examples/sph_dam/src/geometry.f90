@@ -71,7 +71,9 @@ contains
         do k=cfg%kmino_,cfg%kmaxo_
            do j=cfg%jmino_,cfg%jmaxo_
               do i=cfg%imino_,cfg%imaxo_
-                 if (cfg%ym(j).lt.0.0_WP) cfg%VF(i,j,k)=0.0_WP
+                 if (cfg%xm(i).lt.cfg%x(cfg%imin  )) cfg%VF(i,j,k)=0.0_WP
+                 if (cfg%xm(i).gt.cfg%x(cfg%imax+1)) cfg%VF(i,j,k)=0.0_WP
+                 if (cfg%ym(j).lt.0.0_WP)            cfg%VF(i,j,k)=0.0_WP
               end do
            end do
         end do

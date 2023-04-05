@@ -379,9 +379,9 @@ contains
         do i=1,this%ng_
            if (this%g(i)%id.eq.0) cycle
            dist=this%cfg%get_scalar(pos=this%g(i)%pos,i0=this%g(i)%ind(1),j0=this%g(i)%ind(2),k0=this%g(i)%ind(3),S=this%Wdist,bc='d')
-           if (dist.lt.this%rmax) nimg=nimg+2
+           if (dist.lt.this%rmax) nimg=nimg+1
         end do
-        ! Add image particles to ghost array
+        ! Image particles across the boundary
         if (nimg.gt.0) then
            allocate(ptmp(this%ng_)); ptmp=this%g
            deallocate(this%g); allocate(this%g(this%ng_+nimg))
@@ -393,41 +393,26 @@ contains
               if (dist.lt.this%rmax) then
                  n12=this%Wnorm(:,this%p(i)%ind(1),this%p(i)%ind(2),this%p(i)%ind(3))
                  n12=n12/(sum(n12)+epsilon(1.0_WP))
-                 ! Create an image particle
                  nimg=nimg+1
                  this%g(nimg)=this%p(i)
                  this%g(nimg)%id=0
-                 this%g(nimg)%vel=-this%p(i)%vel
+                 this%g(nimg)%vel=this%g(nimg)%vel-2.0_WP*dot_product(n12,this%p(i)%vel)*n12
                  this%g(nimg)%pos=this%p(i)%pos-2.0_WP*n12*dist
-                 this%g(nimg)%ind=this%cfg%get_ijk_global(this%g(nimg)%pos,this%p(i)%ind)
-                 ! Create a boundary particle
-                 nimg=nimg+1
-                 this%g(nimg)=this%p(i)
-                 this%g(nimg)%id=0
-                 this%g(nimg)%vel=0.0_WP
-                 this%g(nimg)%pos=this%p(i)%pos-n12*dist+epsilon(1.0_WP)
                  this%g(nimg)%ind=this%cfg%get_ijk_global(this%g(nimg)%pos,this%p(i)%ind)
               end if
            end do
+           ! Image ghost particles across the boundary
            do i=1,this%ng_
               if (ptmp(i)%id.eq.0) cycle
               dist=this%cfg%get_scalar(pos=ptmp(i)%pos,i0=ptmp(i)%ind(1),j0=ptmp(i)%ind(2),k0=ptmp(i)%ind(3),S=this%Wdist,bc='d')
               if (dist.lt.this%rmax) then
                  n12=this%Wnorm(:,ptmp(i)%ind(1),ptmp(i)%ind(2),ptmp(i)%ind(3))
                  n12=n12/(sum(n12)+epsilon(1.0_WP))
-                 ! Create an image particle
                  nimg=nimg+1
                  this%g(nimg)=ptmp(i)
                  this%g(nimg)%id=0
-                 this%g(nimg)%vel=-ptmp(i)%vel
+                 this%g(nimg)%vel=-2.0_WP*dot_product(n12,ptmp(i)%vel)*n12
                  this%g(nimg)%pos=ptmp(i)%pos-2.0_WP*n12*dist
-                 this%g(nimg)%ind=this%cfg%get_ijk_global(this%g(nimg)%pos,ptmp(i)%ind)
-                 ! Create a boundary particle
-                 nimg=nimg+1
-                 this%g(nimg)=ptmp(i)
-                 this%g(nimg)%id=0
-                 this%g(nimg)%vel=0.0_WP
-                 this%g(nimg)%pos=ptmp(i)%pos-n12*dist+epsilon(1.0_WP)
                  this%g(nimg)%ind=this%cfg%get_ijk_global(this%g(nimg)%pos,ptmp(i)%ind)
               end if
            end do
@@ -484,7 +469,7 @@ contains
          real(WP), dimension(3) :: rpos,dWdx,n12,buf
          real(WP), dimension(3,3) :: L
          real(WP), dimension(:,:), allocatable :: Ldim,Li
-         real(WP) :: dist,sumW,rhs,m2,dV,Dcol,Lp
+         real(WP) :: dist,sumW,stress,m2,dV,Dcol,Lp
 
          ! Get number of dimensions
          ndim=count((/this%cfg%nx,this%cfg%ny,this%cfg%nz/).gt.1)
@@ -569,15 +554,12 @@ contains
                            dWdx(1) = sum(L(1,:)*buf)
                            dWdx(2) = sum(L(2,:)*buf)
                            dWdx(3) = sum(L(3,:)*buf)
-                           !dWdx=gradW(dist,this%h,p1%pos,p2%pos,cubic)/sumW
                            ! Pressure
-                           rhs=-(p1%p/p1%rho**2+p2%p/p2%rho**2)
-                           ! Viscous stress (only during compression)
-                           !if (dot_product(p1%vel-p2%vel,rpos).lt.0.0_WP) &
-                           !     rhs=rhs+this%visc/(p1%rho+p2%rho)*this%c*this%h*dot_product(p1%vel-p2%vel,rpos)/dist**2
-                           rhs=rhs+16.0_WP*this%visc/(p1%rho+p2%rho)*dot_product(p1%vel-p2%vel,rpos)*this%hi/dist
+                           stress=-(p1%p/p1%rho**2+p2%p/p2%rho**2)
+                           ! Viscous stress
+                           stress=stress+16.0_WP*this%visc/(p1%rho+p2%rho)*dot_product(p1%vel-p2%vel,rpos)/this%h/dist
                            ! Sum RHS terms
-                           p1%dudt=p1%dudt+rhs*m2*dWdx
+                           p1%dudt=p1%dudt+stress*m2*dWdx
                            p1%dRhoDt=p1%dRhoDt+m2*dot_product(p1%vel-p2%vel,dWdx)
                            p1%dxdt=p1%dxdt+m2*(p2%vel-p1%vel)/(p1%rho+p2%rho)*W(dist,this%h,cubic)/sumW
                         end if
@@ -591,7 +573,8 @@ contains
             if (dist.lt.Lp) then
                n12=this%Wnorm(:,p1%ind(1),p1%ind(2),p1%ind(3))
                n12=n12/(sum(n12)+epsilon(1.0_WP))
-               !p1%dudt=p1%dudt+Dcol*((Lp/dist)**4-(Lp/dist)**2)*n12/dist
+               dist=dist+1.0e-9_WP*Lp
+               p1%dudt=p1%dudt+Dcol*((Lp/dist)**4-(Lp/dist)**2)*n12/dist
             end if
             ! Include gravity
             p1%dudt=p1%dudt+this%gravity
