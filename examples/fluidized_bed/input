@@ -29,9 +29,5 @@ Particle density :  2600
 Particle diameter : 200e-6
 Collision timescale : 15e-5
 
-# Pressure solver
-Pressure tolerance : 	1e-5
-Pressure iteration : 	100
-
 # Ensight output
 Ensight output period : 80e-5

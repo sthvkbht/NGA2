@@ -2,7 +2,7 @@
 module simulation
    use precision,         only: WP
    use geometry,          only: cfg,D,get_VF
-   use fftsolver3d_class, only: fftsolver3d
+   use fft3d_class,       only: fft3d
    use ddadi_class,       only: ddadi
    use incomp_class,      only: incomp
    use sgsmodel_class,    only: sgsmodel
@@ -15,7 +15,7 @@ module simulation
 
    !> Get an an incompressible solver, pressure solver, and corresponding time tracker
    type(incomp),      public :: fs
-   type(fftsolver3d), public :: ps
+   type(fft3d),       public :: ps
    type(ddadi),       public :: vs
    type(sgsmodel),    public :: sgs
    type(timetracker), public :: time
@@ -101,7 +101,7 @@ contains
          call param_read('Density',fs%rho)
          call param_read('Dynamic viscosity',visc); fs%visc=visc
          ! Configure pressure solver
-         ps=fftsolver3d(cfg=cfg,name='Pressure',nst=7)
+         ps=fft3d(cfg=cfg,name='Pressure',nst=7)
          ! Configure implicit velocity solver
          vs=ddadi(cfg=cfg,name='Velocity',nst=7)
          ! Setup the solver

@@ -4,7 +4,7 @@ module simulation
   use precision,          only: WP
   use geometry,           only: cfg
   use lowmach_class,      only: lowmach
-  use fftsolver3d_class,  only: fftsolver3d
+  use fft3d_class,        only: fft3d
   use ddadi_class,        only: ddadi
   use lpt_class,          only: lpt
   use timetracker_class,  only: timetracker
@@ -18,7 +18,7 @@ module simulation
 
   !> Get an LPT solver, a lowmach solver, and corresponding time tracker
   type(lowmach),      public :: fs
-  type(fftsolver3d),  public :: ps
+  type(fft3d),        public :: ps
   type(ddadi),        public :: vs
   type(lpt),          public :: lp
   type(timetracker),  public :: time
@@ -127,7 +127,7 @@ contains
       ! Assign acceleration of gravity
       call param_read('Gravity',fs%gravity)
       ! Configure pressure solver
-      ps=fftsolver3d(cfg=cfg,name='Pressure',nst=7)
+      ps=fft3d(cfg=cfg,name='Pressure',nst=7)
       ! Configure implicit velocity solver
       vs=ddadi(cfg=cfg,name='Velocity',nst=7)
       ! Setup the solver
