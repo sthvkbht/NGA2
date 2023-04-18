@@ -1267,8 +1267,9 @@ contains
     ! Return without filtering if filter width is zero
     if (this%filter_width.le.0.0_WP) return
 
-    ! Recompute filter coeff and number of explicit steps needed
-    filter_coeff=0.5_WP*(this%filter_width/(2.0_WP*sqrt(2.0_WP*log(2.0_WP))))**2
+    ! Recompute filter coefficient
+    filter_coeff=max(this%filter_width**2-this%cfg%min_meshsize**2,0.0_WP)/(16.0_WP*log(2.0_WP))
+    if (filter_coeff.le.0.0_WP) return
 
     if (this%implicit_filter) then  !< Apply filter implicitly
        if (.not.this%implicit%setup_done) then

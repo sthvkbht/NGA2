@@ -152,7 +152,7 @@ contains
       ! Get particle diameter from the input
       call param_read('Particle diameter',dp)
       ! Set filter scale to 3.5*dx
-      lp%filter_width=3.5_WP*cfg%min_meshsize
+      call param_read('Filter width',lp%filter_width,default=4.0_WP*dp)
 
       ! Root process initializes particles uniformly
       call param_read('Bed height',Hbed)
