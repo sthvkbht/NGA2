@@ -65,7 +65,6 @@ module tracer_class
      ! Injection parameters
      real(WP) :: inj_rate                                !< Rate of particle injection (#/time)
      real(WP), dimension(3) :: inj_pos                   !< Center location to inject particles
-     real(WP) :: inj_d=0.0_WP                            !< Diameter to inject particles within
 
      ! Monitoring info
      real(WP) :: Umin,Umax,Umean,Uvar                    !< U velocity info
@@ -174,13 +173,15 @@ contains
        if (this%p(i)%pos(1).lt.this%cfg%x(this%cfg%imin).or.this%p(i)%pos(1).gt.this%cfg%x(this%cfg%imax+1)) this%p(i)%flag=1
        if (this%p(i)%pos(2).lt.this%cfg%y(this%cfg%jmin).or.this%p(i)%pos(2).gt.this%cfg%y(this%cfg%jmax+1)) this%p(i)%flag=1
        if (this%p(i)%pos(3).lt.this%cfg%z(this%cfg%kmin).or.this%p(i)%pos(3).gt.this%cfg%z(this%cfg%kmax+1)) this%p(i)%flag=1
+       ! Handle particles in walls
+       if (this%cfg%VF(this%p(i)%ind(1),this%p(i)%ind(2),this%p(i)%ind(3)).le.0.0_WP) this%p(i)%flag=1
        ! Relocalize the particle
        this%p(i)%ind=this%cfg%get_ijk_global(this%p(i)%pos,this%p(i)%ind)
        if (this%p(i)%flag.eq.1) then
           ! Count number of particles removed
           this%np_out=this%np_out+1
        else
-          ! Store fluidquantities at particle location
+          ! Interpolate fluid quantities to particle location
           this%p(i)%vel=this%cfg%get_velocity(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),U=U,V=V,W=W)
           this%p(i)%rho=this%cfg%get_scalar(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=rho,bc='n')
           this%p(i)%P=this%cfg%get_scalar(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=P,bc='n')
@@ -317,25 +318,11 @@ contains
       ! Set x position
       pos(1) = this%inj_pos(1)
       ! Random y & z position within a circular region
+      pos(2)=random_uniform(lo=this%cfg%y(this%cfg%jmin),hi=this%cfg%y(this%cfg%jmax+1))
       if (this%cfg%nz.eq.1) then
-         if (this%inj_d.gt.0.0_WP) then
-            pos(2)=random_uniform(lo=this%inj_pos(2)-0.5_WP*this%inj_d,hi=this%inj_pos(3)+0.5_WP*this%inj_d)
-         else
-            pos(2)=random_uniform(lo=this%cfg%y(this%cfg%jmin),hi=this%cfg%y(this%cfg%jmax+1))
-         end if
          pos(3) = this%cfg%zm(this%cfg%kmin_)
       else
-         if (this%inj_d.gt.0.0_WP) then
-            rand=random_uniform(lo=0.0_WP,hi=1.0_WP)
-            r=0.5_WP*this%inj_d*sqrt(rand) !< sqrt(rand) avoids accumulation near the center
-            call random_number(rand)
-            theta=random_uniform(lo=0.0_WP,hi=twoPi)
-            pos(2) = this%inj_pos(2)+r*sin(theta)
-            pos(3) = this%inj_pos(3)+r*cos(theta)
-         else
-            pos(2)=random_uniform(lo=this%cfg%y(this%cfg%jmin),hi=this%cfg%y(this%cfg%jmax+1))
-            pos(3)=random_uniform(lo=this%cfg%z(this%cfg%kmin),hi=this%cfg%z(this%cfg%kmax+1))
-         end if
+         pos(3)=random_uniform(lo=this%cfg%z(this%cfg%kmin),hi=this%cfg%z(this%cfg%kmax+1))
       end if
     end function get_position
 
