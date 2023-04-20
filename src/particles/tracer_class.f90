@@ -212,7 +212,6 @@ contains
   !> Requires injection parameters to be set beforehand
   subroutine inject(this,dt,U,V,W,rho,P)
     use mpi_f08
-    use mathtools, only: Pi
     implicit none
     class(tracer), intent(inout) :: this
     real(WP), intent(inout) :: dt                  !< Timestep size over which to advance
@@ -308,10 +307,8 @@ contains
     ! Position for bulk injection of particles
     function get_position() result(pos)
       use random, only: random_uniform
-      use mathtools, only: twoPi
       implicit none
       real(WP), dimension(3) :: pos
-      real(WP) :: rand,r,theta
       ! Set x position
       pos(1) = this%inj_pos(1)
       ! Random y & z position within a circular region
