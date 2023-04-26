@@ -97,7 +97,6 @@ contains
     type(tracer) :: self
     class(config), target, intent(in) :: cfg
     character(len=*), optional :: name
-    integer :: i,j,k,l
 
     ! Set the name for the solver
     if (present(name)) self%name=trim(adjustl(name))
@@ -220,12 +219,10 @@ contains
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: W         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: rho       !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: P         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP) :: inj_min(3),inj_max(3)              !< Min/max extents of injection
     real(WP) :: Ngoal,Nadded                       !< Injection rate parameters
     real(WP), save :: previous_error=0.0_WP        !< Store number of particles left over from previous timestep
     integer(kind=8) :: maxid_,maxid                !< Keep track of maximum particle id
-    integer :: i,j,np0_,np_tmp,count,buf,ierr
-    type(MPI_Status) :: status
+    integer :: i,np0_,np_tmp,count,buf,ierr
     
     ! Initial number of particles
     np0_=this%np_
@@ -361,7 +358,7 @@ contains
     implicit none
     class(tracer), intent(inout) :: this
     real(WP) :: buf,safe_np
-    integer :: i,j,k,ierr
+    integer :: i,ierr
 
     ! Create safe np
     safe_np=real(max(this%np,1),WP)
