@@ -99,7 +99,7 @@ module lpt_class
      real(WP) :: inj_dmin                                !< Min diameter assigned during injection
      real(WP) :: inj_dmax                                !< Max diameter assigned during injection
      real(WP) :: inj_dshift                              !< Diameter shift assigned during injection
-     real(WP) :: inj_d                                   !< Diameter to inject particles within
+     real(WP) :: inj_D=0.0_WP                            !< Diameter to inject particles within
 
      ! Monitoring info
      real(WP) :: VFmin,VFmax,VFmean,VFvar                !< Volume fraction info
@@ -1380,10 +1380,10 @@ contains
        count=0
        inj_min(1)=this%cfg%x(this%cfg%imino)
        inj_max(1)=this%inj_pos(1)+this%inj_dmax
-       inj_min(2)=this%inj_pos(2)-0.5_WP*this%inj_d-this%inj_dmax
-       inj_max(2)=this%inj_pos(2)+0.5_WP*this%inj_d+this%inj_dmax
-       inj_min(3)=this%inj_pos(3)-0.5_WP*this%inj_d-this%inj_dmax
-       inj_max(3)=this%inj_pos(3)+0.5_WP*this%inj_d+this%inj_dmax
+       inj_min(2)=this%inj_pos(2)-0.5_WP*this%inj_D-this%inj_dmax
+       inj_max(2)=this%inj_pos(2)+0.5_WP*this%inj_D+this%inj_dmax
+       inj_min(3)=this%inj_pos(3)-0.5_WP*this%inj_D-this%inj_dmax
+       inj_max(3)=this%inj_pos(3)+0.5_WP*this%inj_D+this%inj_dmax
        do i=1,this%np_
           if ( this%p(i)%pos(1).gt.inj_min(1).and.this%p(i)%pos(1).lt.inj_max(1) .and.&
                this%p(i)%pos(2).gt.inj_min(2).and.this%p(i)%pos(2).lt.inj_max(2) .and.&
@@ -1528,18 +1528,30 @@ contains
       real(WP) :: rand,r,theta
       ! Set x position
       pos(1) = this%inj_pos(1)
-      ! Random y & z position within a circular region
-      if (this%cfg%nz.eq.1) then
-         pos(2)=random_uniform(lo=this%inj_pos(2)-0.5_WP*this%inj_d,hi=this%inj_pos(3)+0.5_WP*this%inj_d)
-         pos(3) = this%cfg%zm(this%cfg%kmin_)
+      ! Set in y & z
+      if (this%inj_D.gt.0.0_WP) then
+         ! Random y & z position within a circular region
+         if (this%cfg%nz.eq.1) then
+            pos(2)=random_uniform(lo=this%inj_pos(2)-0.5_WP*this%inj_D,hi=this%inj_pos(3)+0.5_WP*this%inj_D)
+            pos(3) = this%cfg%zm(this%cfg%kmin_)
+         else
+            rand=random_uniform(lo=0.0_WP,hi=1.0_WP)
+            r=0.5_WP*this%inj_D*sqrt(rand) !< sqrt(rand) avoids accumulation near the center
+            call random_number(rand)
+            theta=random_uniform(lo=0.0_WP,hi=twoPi)
+            pos(2) = this%inj_pos(2)+r*sin(theta)
+            pos(3) = this%inj_pos(3)+r*cos(theta)
+         end if
       else
-         rand=random_uniform(lo=0.0_WP,hi=1.0_WP)
-         r=0.5_WP*this%inj_d*sqrt(rand) !< sqrt(rand) avoids accumulation near the center
-         call random_number(rand)
-         theta=random_uniform(lo=0.0_WP,hi=twoPi)
-         pos(2) = this%inj_pos(2)+r*sin(theta)
-         pos(3) = this%inj_pos(3)+r*cos(theta)
+         ! Random y & z position across domain width
+         pos(2)=random_uniform(lo=this%cfg%y(this%cfg%jmin),hi=this%cfg%y(this%cfg%jmax+1))
+         if (this%cfg%nz.eq.1) then
+            pos(3) = this%cfg%zm(this%cfg%kmin_)
+         else
+            pos(3)=random_uniform(lo=this%cfg%z(this%cfg%kmin),hi=this%cfg%z(this%cfg%kmax+1))
+         end if
       end if
+      
     end function get_position
 
   end subroutine inject
