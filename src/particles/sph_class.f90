@@ -139,16 +139,15 @@ contains
     real(WP) :: W
     real(WP) :: q
     q=d/h
+    W = 0.0_WP
     select case (kernel)
     case (cubic)
-       W = 0.0_WP
        if (q.ge.0.0_WP .and. q.lt.1.0_WP) then
           W = 1.0_WP-1.5_WP*q**2+0.75_WP*q**3
        elseif (q.ge.1.0_WP .and. q.lt.2.0_WP) then
           W = 0.25_WP*(2.0_WP-q)**3
        end if
     case (quintic)
-       W = 0.0_WP
        if (q.ge.0.0_WP .and. q.lt.1.0_WP) then
           W = (3.0_WP-q)**5-6.0_WP*(2.0_WP-q)**5+15.0_WP*(1.0_WP-q)**5
        elseif (q.ge.1.0_WP .and. q.lt.2.0_WP) then
@@ -169,7 +168,7 @@ contains
     real(WP), intent(in) :: d,h
     integer, intent(in) :: kernel
     real(WP), dimension(3) :: gradW
-    real(WP) :: q,dWdr,x12
+    real(WP) :: q,dWdr
     q = d/h
     select case (kernel)
     case(cubic)
@@ -612,7 +611,6 @@ contains
       class(sph), intent(inout) :: this
       real(WP), intent(inout) :: dt  !< Timestep size over which to advance
       integer :: n,ierr
-      type(part), dimension(:), allocatable :: pold
       
       ! Zero out number of particles removed
       this%np_out=0
@@ -708,7 +706,7 @@ contains
       implicit none
       class(sph), intent(inout) :: this
       real(WP) :: buf,safe_np
-      integer :: i,j,k,ierr
+      integer :: i,ierr
       
       ! Create safe np
       safe_np=real(max(this%np,1),WP)
@@ -800,8 +798,8 @@ contains
       type(part), dimension(:), allocatable :: torecv
       integer :: no,nsend,nrecv
       type(MPI_Status) :: status
-      integer :: icnt,isrc,idst,ierr
-      integer :: i,n
+      integer :: isrc,idst,ierr
+      integer :: n
       
       ! Check overlap size
       if (present(nover)) then
