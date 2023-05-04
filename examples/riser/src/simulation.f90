@@ -6,7 +6,6 @@ module simulation
   use lowmach_class,      only: lowmach
   use fft3d_class,        only: fft3d
   use ddadi_class,        only: ddadi
-  use hypre_str_class,    only: hypre_str
   use lpt_class,          only: lpt
   use timetracker_class,  only: timetracker
   use ensight_class,      only: ensight
@@ -164,7 +163,6 @@ contains
 
     ! Create a low Mach flow solver with bconds
     create_flow_solver: block
-      use hypre_str_class, only: pcg_pfmg
       ! Create flow solver
       fs=lowmach(cfg=cfg,name='Variable density low Mach NS')
 
@@ -176,10 +174,6 @@ contains
       call param_read('Gravity',fs%gravity)
       ! Configure pressure solver
       ps=fft3d(cfg=cfg,name='Pressure',nst=7)
-      ! Configure implicit velocity solver
-      !vs=hypre_str(cfg=cfg,name='Velocity',method=pcg_pfmg,nst=7)
-      !call param_read('Implicit iteration',vs%maxit)
-      !call param_read('Implicit tolerance',vs%rcvg)
       vs=ddadi(cfg=cfg,name='Velocity',nst=7)
       ! Setup the solver
       call fs%setup(pressure_solver=ps,implicit_solver=vs)
