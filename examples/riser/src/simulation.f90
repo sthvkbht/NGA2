@@ -2,7 +2,7 @@
 module simulation
   use string,             only: str_medium
   use precision,          only: WP
-  use geometry,           only: cfg,D,get_VF
+  use geometry,           only: cfg,D
   use lowmach_class,      only: lowmach
   use fft3d_class,        only: fft3d
   use ddadi_class,        only: ddadi
@@ -44,8 +44,6 @@ module simulation
   real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi,rho0,dRHOdt
   real(WP), dimension(:,:,:), allocatable :: srcUlp,srcVlp,srcWlp
   real(WP), dimension(:,:,:), allocatable :: tmp1,tmp2,tmp3
-  real(WP), dimension(:,:,:), allocatable :: G
-  real(WP), dimension(:,:,:,:), allocatable :: Gnorm
   real(WP) :: visc,rho,mfr,mfr_target,bforce
 
   !> Max timestep size for LPT
@@ -74,7 +72,7 @@ contains
          do k=fs%cfg%kmin_,fs%cfg%kmax_
             do j=fs%cfg%jmin_,fs%cfg%jmax_
                do i=fs%cfg%imin_,fs%cfg%imax_
-                  vol=fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*get_VF(i,j,k,'U')
+                  vol=fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*sum(fs%itpr_x(:,i,j,k)*cfg%VF(i-1:i,j,k))
                   myUvol=myUvol+vol
                   myRhoU=myRhoU+vol*(fs%rhoU(i,j,k)+srcU(i,j,k))
                end do
@@ -84,7 +82,7 @@ contains
          do k=fs%cfg%kmin_,fs%cfg%kmax_
             do j=fs%cfg%jmin_,fs%cfg%jmax_
                do i=fs%cfg%imin_,fs%cfg%imax_
-                  vol=fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*get_VF(i,j,k,'U')
+                  vol=fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*sum(fs%itpr_x(:,i,j,k)*cfg%VF(i-1:i,j,k))
                   myUvol=myUvol+vol
                   myRhoU=myRhoU+vol*fs%rhoU(i,j,k)
                end do
@@ -201,11 +199,9 @@ contains
       allocate(Vi      (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(Wi      (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(rho0    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-      allocate(G       (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(tmp1    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(tmp2    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(tmp3    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-      allocate(Gnorm   (1:3,cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
     end block allocate_work_arrays
 
 
@@ -254,8 +250,8 @@ contains
       call param_read('Friction coefficient',lp%mu_f,default=0.0_WP)
       ! Set gravity
       call param_read('Gravity',lp%gravity)
-      ! Set filter scale to 3.5*dx
-      lp%filter_width=3.5_WP*cfg%min_meshsize
+      ! Set filter width
+      call param_read('Filter width',lp%filter_width)
       ! Initialize particles
       if (restarted) then
          call param_read('Restart from',timestamp,'r')
@@ -409,28 +405,6 @@ contains
       mfr_target=mfr
     end block initialize_velocity
 
-
-    ! Initialize levelset and its normal
-    initialize_G: block
-      integer :: i,j,k
-      real(WP) :: buf
-      real(WP), dimension(3) :: n12
-      do k=fs%cfg%kmin_,fs%cfg%kmax_
-         do j=fs%cfg%jmin_,fs%cfg%jmax_
-            do i=fs%cfg%imin_,fs%cfg%imax_
-               G(i,j,k)=0.5_WP*D-sqrt(fs%cfg%ym(j)**2+fs%cfg%zm(k)**2)
-               n12(1)=0.0_WP
-               n12(2)=-fs%cfg%ym(j)
-               n12(3)=-fs%cfg%zm(k)
-               buf = sqrt(sum(n12*n12))+epsilon(1.0_WP)
-               Gnorm(:,i,j,k)=n12/buf
-            end do
-         end do
-      end do
-      call fs%cfg%sync(G)
-      call fs%cfg%sync(Gnorm)
-    end block initialize_G
-
     ! Add Ensight output
     create_ensight: block
       ! Create Ensight output from cfg
@@ -441,7 +415,7 @@ contains
       ! Add variables to output
       call ens_out%add_particle('particles',pmesh)
       call ens_out%add_vector('velocity',Ui,Vi,Wi)
-      call ens_out%add_scalar('levelset',G)
+      call ens_out%add_scalar('levelset',cfg%Gib)
       call ens_out%add_scalar('pressure',fs%P)
       call ens_out%add_scalar('epsp',lp%VF)
       call ens_out%add_scalar('ptke',lp%ptke)
@@ -564,7 +538,7 @@ contains
             ! Decide the timestep size
             mydt=min(lp_dt,time%dtmid-dt_done)
             ! Collide and advance particles
-            call lp%collide(dt=mydt,Gib=G,Nxib=Gnorm(1,:,:,:),Nyib=Gnorm(2,:,:,:),Nzib=Gnorm(3,:,:,:))
+            call lp%collide(dt=mydt,Gib=cfg%Gib,Nxib=cfg%Nib(1,:,:,:),Nyib=cfg%Nib(2,:,:,:),Nzib=cfg%Nib(3,:,:,:))
             call lp%advance(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
                  srcU=tmp1,srcV=tmp2,srcW=tmp3)
             srcUlp=srcUlp+tmp1
@@ -622,22 +596,6 @@ contains
             call fs%cfg%sync(resW)
           end block add_lpt_src
 
-          ! Apply direct forcing to enforce BC at the pipe walls
-          ibm_correction: block
-            integer :: i,j,k
-            real(WP) :: VFx,VFy,VFz
-            do k=fs%cfg%kmin_,fs%cfg%kmax_
-               do j=fs%cfg%jmin_,fs%cfg%jmax_
-                  do i=fs%cfg%imin_,fs%cfg%imax_
-                     VFx=get_VF(i,j,k,'U'); VFy=get_VF(i,j,k,'V'); VFz=get_VF(i,j,k,'W')
-                     resU(i,j,k)=resU(i,j,k)-(1.0_WP-VFx)*sum(fs%itpr_x(:,i,j,k)*fs%rho(i-1:i,j,k))*fs%U(i,j,k)
-                     resV(i,j,k)=resV(i,j,k)-(1.0_WP-VFy)*sum(fs%itpr_y(:,i,j,k)*fs%rho(i,j-1:j,k))*fs%V(i,j,k)
-                     resW(i,j,k)=resW(i,j,k)-(1.0_WP-VFz)*sum(fs%itpr_z(:,i,j,k)*fs%rho(i,j,k-1:k))*fs%W(i,j,k)
-                  end do
-               end do
-            end do
-          end block ibm_correction
-
           ! Add body forcing
           bodyforcing: block
             mfr=get_bodyforce_mfr(resU)
@@ -653,22 +611,22 @@ contains
           fs%V=2.0_WP*fs%V-fs%Vold+resV
           fs%W=2.0_WP*fs%W-fs%Wold+resW
 
-!!$          ! Apply IB direct forcing to enforce BC at the pipe walls
-!!$          ibforcing: block
-!!$            integer :: i,j,k
-!!$            do k=fs%cfg%kmin_,fs%cfg%kmax_
-!!$               do j=fs%cfg%jmin_,fs%cfg%jmax_
-!!$                  do i=fs%cfg%imin_,fs%cfg%imax_
-!!$                     fs%U(i,j,k)=get_VF(i,j,k,'U')*fs%U(i,j,k)
-!!$                     fs%V(i,j,k)=get_VF(i,j,k,'V')*fs%V(i,j,k)
-!!$                     fs%W(i,j,k)=get_VF(i,j,k,'W')*fs%W(i,j,k)
-!!$                  end do
-!!$               end do
-!!$            end do
-!!$            call fs%cfg%sync(fs%U)
-!!$            call fs%cfg%sync(fs%V)
-!!$            call fs%cfg%sync(fs%W)
-!!$          end block ibforcing
+          ! Apply IB forcing to enforce BC at the pipe walls
+          ibforcing: block
+            integer :: i,j,k
+            do k=fs%cfg%kmin_,fs%cfg%kmax_
+               do j=fs%cfg%jmin_,fs%cfg%jmax_
+                  do i=fs%cfg%imin_,fs%cfg%imax_
+                     fs%U(i,j,k)=sum(fs%itpr_x(:,i,j,k)*cfg%VF(i-1:i,j,k))*fs%U(i,j,k)
+                     fs%V(i,j,k)=sum(fs%itpr_y(:,i,j,k)*cfg%VF(i,j-1:j,k))*fs%V(i,j,k)
+                     fs%W(i,j,k)=sum(fs%itpr_z(:,i,j,k)*cfg%VF(i,j,k-1:k))*fs%W(i,j,k)
+                  end do
+               end do
+            end do
+            call fs%cfg%sync(fs%U)
+            call fs%cfg%sync(fs%V)
+            call fs%cfg%sync(fs%W)
+          end block ibforcing
 
           ! Apply other boundary conditions and update momentum
           call fs%apply_bcond(time%tmid,time%dtmid)
@@ -779,7 +737,7 @@ contains
     ! timetracker
 
     ! Deallocate work arrays
-    deallocate(resU,resV,resW,srcUlp,srcVlp,srcWlp,Ui,Vi,Wi,dRHOdt,G,Gnorm,tmp1,tmp2,tmp3)
+    deallocate(resU,resV,resW,srcUlp,srcVlp,srcWlp,Ui,Vi,Wi,dRHOdt,tmp1,tmp2,tmp3)
 
   end subroutine simulation_final
 
