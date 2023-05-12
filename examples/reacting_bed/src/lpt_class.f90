@@ -1013,19 +1013,19 @@ contains
              end do
           end do
        end do
-       call this%cfg%sync(FX)
-       call this%cfg%sync(FY)
-       call this%cfg%sync(FX)
        ! Interpolate to the cell center
        do k=this%cfg%kmin_,this%cfg%kmax_
           do j=this%cfg%jmin_,this%cfg%jmax_
              do i=this%cfg%imin_,this%cfg%imax_
-                dTdx(i,j,k) = 0.5_WP*(FX(i+1,j,k)+FX(i,j,k))
-                dTdy(i,j,k) = 0.5_WP*(FY(i,j+1,k)+FY(i,j,k))
-                dTdz(i,j,k) = 0.5_WP*(FZ(i,j,k+1)+FZ(i,j,k))
+                dTdx(i,j,k)=0.5_WP*(FX(i+1,j,k)+FX(i,j,k))
+                dTdy(i,j,k)=0.5_WP*(FY(i,j+1,k)+FY(i,j,k))
+                dTdz(i,j,k)=0.5_WP*(FZ(i,j,k+1)+FZ(i,j,k))
              end do
           end do
        end do
+       call this%cfg%sync(dTdx)
+       call this%cfg%sync(dTdy)
+       call this%cfg%sync(dTdz)
     end if
 
     ! Compute gradient of mass fraction
@@ -1042,21 +1042,20 @@ contains
              end do
           end do
        end do
-       call this%cfg%sync(FX)
-       call this%cfg%sync(FY)
-       call this%cfg%sync(FX)
        ! Interpolate to the cell center
        do k=this%cfg%kmin_,this%cfg%kmax_
           do j=this%cfg%jmin_,this%cfg%jmax_
              do i=this%cfg%imin_,this%cfg%imax_
-                dYdx(i,j,k) = 0.5_WP*(FX(i+1,j,k)+FX(i,j,k))
-                dYdy(i,j,k) = 0.5_WP*(FY(i,j+1,k)+FY(i,j,k))
-                dYdz(i,j,k) = 0.5_WP*(FZ(i,j,k+1)+FZ(i,j,k))
+                dYdx(i,j,k)=0.5_WP*(FX(i+1,j,k)+FX(i,j,k))
+                dYdy(i,j,k)=0.5_WP*(FY(i,j+1,k)+FY(i,j,k))
+                dYdz(i,j,k)=0.5_WP*(FZ(i,j,k+1)+FZ(i,j,k))
              end do
           end do
        end do
+       call this%cfg%sync(dYdx)
+       call this%cfg%sync(dYdy)
+       call this%cfg%sync(dYdz)
     end if
-
 
     ! Loop over all particles
     do i=1,this%np_
@@ -1098,8 +1097,7 @@ contains
     call this%filter(slip_y)
     call this%filter(slip_z)
     call this%filter(Re)
-
-    PTRS=0.0_WP
+    
     do k=this%cfg%kmino_,this%cfg%kmaxo_
        do j=this%cfg%jmino_,this%cfg%jmaxo_
           do i=this%cfg%imino_,this%cfg%imaxo_
@@ -1220,7 +1218,8 @@ contains
                 ! Pseudo-turbulent diffusivity
                 alpha_par=diff(i,j,k)*(2.0_WP*Rep*(Rep+1.4_WP)*Pr**2*exp(-0.002089_WP*Rep)/(3.0_WP*Pi*Nu)*&
                      (fVF*(-5.11_WP*pVF+10.1_WP*pVF**2-10.85_WP*pVF**3)+1-exp(-10.96_WP*pVF))/&
-                     ((1.17_WP-0.2021*pVF**(1.0_WP/2.0_WP)+0.08568*pVF**(1.0_WP/4.0_WP))*fVF**2*(1.0_WP-1.6_WP*pVF*fVF-3.0_WP*pVF*fVF**4*exp(-Rep**0.4_WP*pVF))))
+                     ((1.17_WP*pVF-0.2021_WP*pVF**(1.0_WP/2.0_WP)+0.08568_WP*pVF**(1.0_WP/4.0_WP)+epsilon(1.0_WP))*&
+                     fVF**2*(1.0_WP-1.6_WP*pVF*fVF-3.0_WP*pVF*fVF**4*exp(-Rep**0.4_WP*pVF))))
                 this%diff_pt(i,j,k)=alpha_par
                 !  Assume isotropic in 2D
                 if (this%cfg%nx.eq.1) then
@@ -1267,6 +1266,10 @@ contains
                 end if
                 
                 ! PTHF
+                !alphaij=0.0_WP
+                !alphaij(1,1)=diff(i,j,k)
+                !alphaij(2,2)=diff(i,j,k)
+                !alphaij(3,3)=diff(i,j,k)
                 PTHF(1,i,j,k) = fVF*(alphaij(1,1)*dTdx(i,j,k)+alphaij(1,2)*dTdy(i,j,k)+alphaij(1,3)*dTdz(i,j,k))
                 PTHF(2,i,j,k) = fVF*(alphaij(2,1)*dTdx(i,j,k)+alphaij(2,2)*dTdy(i,j,k)+alphaij(2,3)*dTdz(i,j,k))
                 PTHF(3,i,j,k) = fVF*(alphaij(3,1)*dTdx(i,j,k)+alphaij(3,2)*dTdy(i,j,k)+alphaij(3,3)*dTdz(i,j,k))
@@ -1361,7 +1364,7 @@ contains
        do k=this%cfg%kmin_,this%cfg%kmax_
           do j=this%cfg%jmin_,this%cfg%jmax_
              do i=this%cfg%imin_,this%cfg%imax_
-                srcT(i,j,k)=-dt*(sum(this%div_x(:,i,j,k)*FX(i:i+1,j,k))+sum(this%div_y(:,i,j,k)*FY(i,j:j+1,k))+sum(this%div_z(:,i,j,k)*FZ(i,j,k:k+1)))
+                srcT(i,j,k)=dt*(sum(this%div_x(:,i,j,k)*FX(i:i+1,j,k))+sum(this%div_y(:,i,j,k)*FY(i,j:j+1,k))+sum(this%div_z(:,i,j,k)*FZ(i,j,k:k+1)))
              end do
           end do
        end do
@@ -1382,7 +1385,7 @@ contains
        do k=this%cfg%kmin_,this%cfg%kmax_
           do j=this%cfg%jmin_,this%cfg%jmax_
              do i=this%cfg%imin_,this%cfg%imax_
-                srcY(i,j,k)=-dt*(sum(this%div_x(:,i,j,k)*FX(i:i+1,j,k))+sum(this%div_y(:,i,j,k)*FY(i,j:j+1,k))+sum(this%div_z(:,i,j,k)*FZ(i,j,k:k+1)))
+                srcY(i,j,k)=dt*(sum(this%div_x(:,i,j,k)*FX(i:i+1,j,k))+sum(this%div_y(:,i,j,k)*FY(i,j:j+1,k))+sum(this%div_z(:,i,j,k)*FZ(i,j,k:k+1)))
              end do
           end do
        end do
@@ -1401,7 +1404,9 @@ contains
     if (allocated(dYdx)) deallocate(dYdx)
     if (allocated(dYdy)) deallocate(dYdy)
     if (allocated(dYdz)) deallocate(dYdz)
+    if (allocated(PTHF)) deallocate(PTHF)
     if (allocated(PTMF)) deallocate(PTMF)
+    
   end subroutine get_ptke
 
   !> Stores scalar information

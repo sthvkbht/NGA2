@@ -584,9 +584,9 @@ contains
          ! Get fluid stress
          call fs%get_div_stress(resU,resV,resW)
          ! Filter fluid quantities
-         fs%Uold=fs%U; call lp%filter(fs%Uold); call lp%filter(Ui)
-         fs%Vold=fs%V; call lp%filter(fs%Vold); call lp%filter(Vi)
-         fs%Wold=fs%W; call lp%filter(fs%Wold); call lp%filter(Wi)
+         fs%Uold=fs%U; call lp%filter(fs%Uold)!; call lp%filter(Ui)
+         fs%Vold=fs%V; call lp%filter(fs%Vold)!; call lp%filter(Vi)
+         fs%Wold=fs%W; call lp%filter(fs%Wold)!; call lp%filter(Wi)
          sc(ind_T)%SCold=sc(ind_T)%SC; call lp%filter(sc(ind_T)%SCold)
          sc(ind_CO2)%SCold=sc(ind_CO2)%SC; call lp%filter(sc(ind_CO2)%SCold)
          ! Collide and advance particles
@@ -595,11 +595,11 @@ contains
               &          stress_x=resU,stress_y=resV,stress_z=resW,T=sc(ind_T)%SCold,YCO2=sc(ind_CO2)%SCold,&
               &          srcU=srcUlp,srcV=srcVlp,srcW=srcWlp,srcSC=srcSClp,fCp=fCp)
          ! Compute PTKE and store source terms
-!!$         call lp%get_ptke(dt=time%dtmid,Ui=Ui,Vi=Vi,Wi=Wi,visc=fs%visc,rho=rhof,T=SC(ind_T)%SCold,fCp=fCp,&
-!!$              &           diff=sc(ind_T)%diff,Y=SC(ind_CO2)%sc,srcU=resU,srcV=resV,srcW=resW,srcT=tmp1,srcY=tmp2)
-!!$          srcUlp=srcUlp+resU; srcVlp=srcVlp+resV; srcWlp=srcWlp+resW
-!!$          srcSClp(:,:,:,ind_T)=srcSClp(:,:,:,ind_T)+tmp1
-!!$          srcSClp(:,:,:,ind_CO2)=srcSClp(:,:,:,ind_CO2)+tmp2
+         call lp%get_ptke(dt=time%dtmid,Ui=Ui,Vi=Vi,Wi=Wi,visc=fs%visc,rho=rhof,T=SC(ind_T)%SC,fCp=fCp,&
+              &           diff=sc(ind_T)%diff,Y=SC(ind_CO2)%SC,srcU=resU,srcV=resV,srcW=resW,srcT=tmp1,srcY=tmp2)
+         srcUlp=srcUlp+resU; srcVlp=srcVlp+resV; srcWlp=srcWlp+resW
+         srcSClp(:,:,:,ind_T)=srcSClp(:,:,:,ind_T)+tmp1
+         srcSClp(:,:,:,ind_CO2)=srcSClp(:,:,:,ind_CO2)+tmp2
        end block lpt
        wt_lpt%time=wt_lpt%time+parallel_time()-wt_lpt%time_in
 
@@ -639,7 +639,7 @@ contains
                    end do
                 end do
              end do
-             
+
              ! Form implicit residual
              call sc(ii)%solve_implicit(time%dt,resSC,fs%rhoU,fs%rhoV,fs%rhoW)
 
@@ -652,7 +652,7 @@ contains
 
              ! Apply other boundary conditions on the resulting field
              call sc(ii)%apply_bcond(time%t,time%dt)
-             
+
              ! Apply scalar boundary conditions
               scalar_bcond: block
                 use vdscalar_class, only: bcond
@@ -664,7 +664,7 @@ contains
                    sc(ii)%SC(i,j,k)=SCin(ii)
                 end do
               end block scalar_bcond
-             call sc(ii)%rho_multiply()
+              call sc(ii)%rho_multiply()
           end do
 
           ! Update dependent variables
@@ -676,6 +676,7 @@ contains
           !end do
           call get_viscosity
           call get_thermal_diffusivity
+          
           wt_sc%time=wt_sc%time+parallel_time()-wt_sc%time_in
           ! ===================================================
 
@@ -747,7 +748,7 @@ contains
           wt_vel%time=wt_vel%time+parallel_time()-wt_vel%time_in
           ! Compute rate-of-change of density accounting for particles and species
           !call sc(1)%get_drhodt(dt=time%dt,drhodt=resSC)
-          resSC=(sc(1)%rho-sc(1)%rhoold)/time%dt-srcSClp(:,:,:,ind_CO2)/time%dt
+          resSC=(sc(1)%rho-sc(1)%rhoold)/time%dt!-srcSClp(:,:,:,ind_CO2)/time%dt
           call fs%cfg%sync(resSC)
           wt_pres%time_in=parallel_time()
           call fs%correct_mfr(drhodt=resSC)
