@@ -8,7 +8,7 @@ module simulation
    use sgsmodel_class,    only: sgsmodel
    use timetracker_class, only: timetracker
    use ensight_class,     only: ensight
-   use event_class,       only: event
+   use event_class,       only: periodic_event
    use monitor_class,     only: monitor
    implicit none
    private
@@ -22,7 +22,7 @@ module simulation
 
    !> Ensight postprocessing
    type(ensight)  :: ens_out
-   type(event)    :: ens_evt
+   type(periodic_event) :: ens_evt
 
    !> Simulation monitor file
    type(monitor) :: mfile,cflfile
@@ -187,7 +187,7 @@ contains
          ! Create Ensight output from cfg
          ens_out=ensight(cfg=cfg,name='pipe')
          ! Create event for Ensight output
-         ens_evt=event(time=time,name='Ensight output')
+         ens_evt=periodic_event(time=time,name='Ensight output')
          call param_read('Ensight output period',ens_evt%tper)
          ! Add variables to output
          call ens_out%add_vector('velocity',Ui,Vi,Wi)

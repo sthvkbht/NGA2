@@ -8,65 +8,65 @@ module simulation
    use timetracker_class, only: timetracker
    use ensight_class,     only: ensight
    use partmesh_class,    only: partmesh
-   use event_class,       only: event
+   use event_class,       only: periodic_event
    use monitor_class,     only: monitor
    implicit none
    private
-   
+
    !> Single-phase incompressible flow solver, pressure and implicit solvers, and a time tracker
    type(fft3d),       public :: ps
    type(incomp),      public :: fs
    type(timetracker), public :: time
    type(lpt),         public :: lp
-   
+
    !> Ensight postprocessing
-   type(partmesh) :: pmesh
-   type(ensight)  :: ens_out
-   type(event)    :: ens_evt
-   
+   type(partmesh)       :: pmesh
+   type(ensight)        :: ens_out
+   type(periodic_event) :: ens_evt
+
    !> Simulation monitor file
    type(monitor) :: mfile,cflfile,lptfile,hitfile,cvgfile
-   
+
    public :: simulation_init,simulation_run,simulation_final
-   
+
    !> Private work arrays
    real(WP), dimension(:,:,:), allocatable :: resU,resV,resW
    real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi
    real(WP), dimension(:,:,:,:), allocatable :: SR
    real(WP), dimension(:,:,:,:,:), allocatable :: gradU
-   
+
    !> Fluid, forcing, and particle parameters
    real(WP) :: visc,meanU,meanV,meanW
    real(WP) :: Urms0,TKE0,EPS0,Re_max
    real(WP) :: TKE,URMS
    real(WP) :: tauinf,G,Gdtau,Gdtaui,dx
-   
+
    !> For monitoring
    real(WP) :: EPS
    real(WP) :: Re_L,Re_lambda
    real(WP) :: eta,ell
    real(WP) :: dx_eta,ell_Lx,Re_ratio,eps_ratio,tke_ratio,nondtime
-   
+
 
 contains
-   
-   
+
+
    !> Compute turbulence stats
    subroutine compute_stats()
       use mpi_f08,  only: MPI_ALLREDUCE,MPI_SUM
       use parallel, only: MPI_REAL_WP
       real(WP) :: myTKE,myEPS
       integer :: i,j,k,ierr
-      
+
       ! Compute mean velocities
       call fs%cfg%integrate(A=Ui,integral=meanU); meanU=meanU/fs%cfg%vol_total
       call fs%cfg%integrate(A=Vi,integral=meanV); meanV=meanV/fs%cfg%vol_total
       call fs%cfg%integrate(A=Wi,integral=meanW); meanW=meanW/fs%cfg%vol_total
-      
+
       ! Compute strainrate and grad(u)
       call fs%get_strainrate(SR=SR)
       call fs%get_gradu(gradu=gradU)
-      
+
       ! Compute current TKE and dissipation rate
       myTKE=0.0_WP
       myEPS=0.0_WP
@@ -80,14 +80,14 @@ contains
       end do
       call MPI_ALLREDUCE(myTKE,TKE,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr); TKE=TKE/fs%cfg%vol_total
       call MPI_ALLREDUCE(myEPS,EPS,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr); EPS=EPS/fs%cfg%vol_total
-      
+
       ! Compute standard parameters for HIT
       Urms=sqrt(2.0_WP/3.0_WP*TKE)
       Re_L=TKE**2.0_WP/EPS/(visc/fs%rho)
       Re_lambda=sqrt(20.0_WP*Re_L/3.0_WP)
       eta=((visc/fs%rho)**3.0_WP/EPS)**0.25_WP
       ell=(0.6667_WP*TKE)**1.5_WP/EPS
-      
+
       ! Some more useful info
       nondtime =time%t/tauinf
       dx_eta   =dx/eta
@@ -95,16 +95,16 @@ contains
       tke_ratio=TKE/TKE0
       ell_Lx   =ell/Lx
       Re_ratio =Re_lambda/Re_max
-      
+
    end subroutine compute_stats
-   
-   
+
+
    !> Initialization of problem solver
    subroutine simulation_init
       use param, only: param_read
       implicit none
-      
-      
+
+
       ! Allocate work arrays
       allocate_work_arrays: block
          allocate(resU(cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
@@ -116,8 +116,8 @@ contains
          allocate(SR  (1:6,cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate(gradU(1:3,1:3,cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       end block allocate_work_arrays
-      
-      
+
+
       ! Initialize time tracker with 2 subiterations
       initialize_timetracker: block
          time=timetracker(amRoot=cfg%amRoot)
@@ -126,8 +126,7 @@ contains
          time%dt=time%dtmax
          time%itmax=2
       end block initialize_timetracker
-      
-      
+
       ! Create a single-phase flow solver without bconds
       create_and_initialize_flow_solver: block
          ! Create flow solver
@@ -215,9 +214,10 @@ contains
          call fs%get_div()
          ! Compute turbulence stats
          call compute_stats()
+
       end block initialize_velocity
-      
-      
+
+
       ! Initialize LPT solver
       initialize_lpt: block
          use random, only: random_uniform
@@ -264,7 +264,7 @@ contains
          ! Get initial particle volume fraction
          call lp%update_VF()
       end block initialize_lpt
-      
+
 
       ! Create partmesh object for Lagrangian particle output
       create_pmesh: block
@@ -272,13 +272,13 @@ contains
          call lp%update_partmesh(pmesh)
       end block create_pmesh
 
-      
+
       ! Add Ensight output
       create_ensight: block
          ! Create Ensight output from cfg
          ens_out=ensight(cfg=cfg,name='HIT')
          ! Create event for Ensight output
-         ens_evt=event(time=time,name='Ensight output')
+         ens_evt=periodic_event(time=time,name='Ensight output')
          call param_read('Ensight output period',ens_evt%tper)
          ! Add variables to output
          call ens_out%add_vector('velocity',Ui,Vi,Wi)
@@ -288,8 +288,8 @@ contains
          ! Output to ensight
          if (ens_evt%occurs()) call ens_out%write_data(time%t)
       end block create_ensight
-      
-      
+
+
       ! Create a monitor file
       create_monitor: block
          ! Prepare some info about fields
@@ -359,48 +359,46 @@ contains
          call cvgfile%add_column(ell_Lx,'ell/Lx')
          call cvgfile%write()
       end block create_monitor
-      
-      
    end subroutine simulation_init
-   
-   
+
+
    !> Time integrate our problem
    subroutine simulation_run
       implicit none
-      
+
       ! Perform time integration
       do while (.not.time%done())
-         
+
          ! Increment time
          call fs%get_cfl(time%dt,time%cfl)
          call time%adjust_dt()
          call time%increment()
-         
+
          ! Advance particles by dt
          resU=fs%rho; resV=fs%visc
          call lp%advance(dt=time%dt,U=fs%U,V=fs%V,W=fs%W,rho=resU,visc=resV)
-         
+
          ! Remember old velocity
          fs%Uold=fs%U
          fs%Vold=fs%V
          fs%Wold=fs%W
-         
+
          ! Perform sub-iterations
          do while (time%it.le.time%itmax)
-            
+
             ! Build mid-time velocity
             fs%U=0.5_WP*(fs%U+fs%Uold)
             fs%V=0.5_WP*(fs%V+fs%Vold)
             fs%W=0.5_WP*(fs%W+fs%Wold)
-            
+
             ! Explicit calculation of drho*u/dt from NS
             call fs%get_dmomdt(resU,resV,resW)
-            
+
             ! Assemble explicit residual
             resU=-2.0_WP*(fs%rho*fs%U-fs%rho*fs%Uold)+time%dt*resU
             resV=-2.0_WP*(fs%rho*fs%V-fs%rho*fs%Vold)+time%dt*resV
             resW=-2.0_WP*(fs%rho*fs%W-fs%rho*fs%Wold)+time%dt*resW
-            
+
             ! Add linear forcing term based on Bassenne et al. (2016)
             linear_forcing: block
                use mpi_f08,  only: MPI_ALLREDUCE,MPI_SUM
@@ -432,15 +430,15 @@ contains
                resV=resV+time%dt*(fs%V-meanV)*A
                resW=resW+time%dt*(fs%W-meanW)*A
             end block linear_forcing
-            
+
             ! Apply these residuals
             fs%U=2.0_WP*fs%U-fs%Uold+resU/fs%rho
             fs%V=2.0_WP*fs%V-fs%Vold+resV/fs%rho
             fs%W=2.0_WP*fs%W-fs%Wold+resW/fs%rho
-            
+
             ! Apply other boundary conditions on the resulting fields
             call fs%apply_bcond(time%t,time%dt)
-            
+
             ! Solve Poisson equation
             call fs%correct_mfr()
             call fs%get_div()
@@ -448,29 +446,29 @@ contains
             fs%psolv%sol=0.0_WP
             call fs%psolv%solve()
             call fs%shift_p(fs%psolv%sol)
-            
+
             ! Correct velocity
             call fs%get_pgrad(fs%psolv%sol,resU,resV,resW)
             fs%P=fs%P+fs%psolv%sol
             fs%U=fs%U-time%dt*resU/fs%rho
             fs%V=fs%V-time%dt*resV/fs%rho
             fs%W=fs%W-time%dt*resW/fs%rho
-            
+
             ! Increment sub-iteration counter
             time%it=time%it+1
-            
+
          end do
-         
+
          ! Recompute interpolated velocity and divergence
          call fs%interp_vel(Ui,Vi,Wi)
          call fs%get_div()
-         
+
          ! Output to ensight
          if (ens_evt%occurs()) then
             call lp%update_partmesh(pmesh)
             call ens_out%write_data(time%t)
          end if
-         
+
          ! Perform and output monitoring
          call compute_stats()
          call fs%get_max()
@@ -480,29 +478,29 @@ contains
          call lptfile%write()
          call hitfile%write()
          call cvgfile%write()
-         
+
       end do
-      
+
    end subroutine simulation_run
-   
-   
+
+
    !> Finalize the NGA2 simulation
    subroutine simulation_final
       implicit none
-      
+
       ! Get rid of all objects - need destructors
       ! monitor
       ! ensight
       ! bcond
       ! timetracker
-      
+
       ! Deallocate work arrays
       deallocate(resU,resV,resW,Ui,Vi,Wi,SR,gradU)
-      
+
    end subroutine simulation_final
-   
-   
-   
-   
-   
+
+
+
+
+
 end module simulation
