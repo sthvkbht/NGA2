@@ -11,7 +11,7 @@ module lpt_class
 
 
   ! Expose type/constructor/methods
-  public :: lpt, part, MPI_PART, MPI_PART_SIZE
+  public :: lpt
 
 
   !> Memory adaptation parameter
@@ -79,7 +79,7 @@ module lpt_class
      ! Solver parameters
      real(WP) :: nstep=1                                 !< Number of substeps (default=1)
      character(len=str_medium), public :: drag_model     !< Drag model
-
+     
      ! Collisional parameters
      real(WP) :: tau_col                                 !< Characteristic collision time scale
      real(WP) :: e_n=1.0_WP                              !< Normal restitution coefficient
@@ -227,7 +227,7 @@ contains
           end do
        end do
     end do
-
+    
     ! Loop over the domain and zero divergence in walls
     do k=self%cfg%kmin_,self%cfg%kmax_
        do j=self%cfg%jmin_,self%cfg%jmax_
@@ -371,7 +371,7 @@ contains
     end block logging
 
   end function constructor
-
+  
 
   !> Resolve collisional interaction between particles, walls, and an optional IB level set
   !> Requires tau_col, e_n, e_w and mu_f to be set beforehand
@@ -401,7 +401,7 @@ contains
         this%p(i)%Tcol=0.0_WP
      end do
    end block zero_force
-
+   
    ! Then share particles across overlap
    call this%share()
 
@@ -471,7 +471,7 @@ contains
 
         ! Cycle if id<=0
         if (this%p(i1)%id.le.0) cycle collision
-
+        
         ! Store particle data
         r1=this%p(i1)%pos
         v1=this%p(i1)%vel
@@ -613,7 +613,7 @@ contains
                        ! Add up the collisions
                        this%ncol=this%ncol+1
                     end if
-
+                    
                  end do
 
               end do
@@ -649,7 +649,7 @@ contains
    if (allocated(ipic)) deallocate(ipic)
 
  end subroutine collide
-
+  
 
   !> Advance the particle equations by a specified time step dt
   !> p%id=0 => no coll, no solve
@@ -660,18 +660,18 @@ contains
     implicit none
     class(lpt), intent(inout) :: this
     real(WP), intent(inout) :: dt  !< Timestep size over which to advance
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: U         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: V         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: W         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: rho       !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: visc      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in), optional :: stress_x  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in), optional :: stress_y  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in), optional :: stress_z  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in), optional :: vortx  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in), optional :: vorty  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in), optional :: vortz  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in), optional :: T      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: U         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: V         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: W         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: rho       !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: visc      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: stress_x  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: stress_y  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: stress_z  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: vortx  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: vorty  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: vortz  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: T      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcU   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcV   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcW   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
@@ -840,14 +840,14 @@ contains
   subroutine get_rhs(this,U,V,W,rho,visc,stress_x,stress_y,stress_z,p,acc,opt_dt)
     implicit none
     class(lpt), intent(inout) :: this
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: U         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: V         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: W         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: rho       !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: visc      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: stress_x  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: stress_y  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: stress_z  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: U         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: V         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: W         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: rho       !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: visc      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_x  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_y  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_z  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     type(part), intent(in) :: p
     real(WP), dimension(3), intent(out) :: acc
     real(WP), intent(out) :: opt_dt
@@ -887,7 +887,7 @@ contains
          ! Tenneti and Subramaniam (2011)
          b1=5.81_WP*pVF/fVF**3+0.48_WP*pVF**(1.0_WP/3.0_WP)/fVF**4
          b2=pVF**3*Re*(0.95_WP+0.61_WP*pVF**3/fVF**2)
-         corr=fVF*(1.0_WP+0.15_WP*Re**(0.687_WP)/fVF**3+b1+b2)
+         corr=fVF*(1.0_WP+0.15_WP*Re**(0.687_WP)/fVF**3+b1+b2)           
       case default
          corr=1.0_WP
       end select
@@ -905,14 +905,14 @@ contains
   subroutine get_lift_torque(this,U,V,W,rho,visc,vortx,vorty,vortz,p,acc,torque)
     implicit none
     class(lpt), intent(inout) :: this
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: U      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: V      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: W      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: rho    !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: visc   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: vortx  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: vorty  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: vortz  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: U      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: V      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: W      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: rho    !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: visc   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: vortx  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: vorty  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: vortz  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     type(part), intent(in) :: p
     real(WP), dimension(3), intent(inout) :: acc
     real(WP), dimension(3), intent(out) :: torque
@@ -978,7 +978,7 @@ contains
 
 
   !> Compute pseudo-turbulent kinetic energy and Reynolds stresses
-  !> Mehrabadi et al. (2015) "Pseudo-turbulent gas-phase velocity
+  !> Mehrabadi et al. (2015) "Pseudo-turbulent gas-phase velocity 
   !> fluctuations in homogeneous gas–solid flow:
   !> fixed particle assemblies and freely evolving suspensions"
   subroutine get_ptke(this,dt,Ui,Vi,Wi,visc,rho,srcU,srcV,srcW)
@@ -1070,7 +1070,7 @@ contains
 
              ! Compute PTKE
              this%ptke(i,j,k) = 0.5_WP*sum(slip**2)*(2.0_WP*pVF + 2.5_WP*pVF*(1.0_WP-pVF)**3*exp(-pVF*sqrt(Rep)))
-
+             
              !  Assume isotropic in 2D
              if (this%cfg%nx.eq.1) then
                 bij = 0.0_WP
@@ -1114,7 +1114,7 @@ contains
                    ! Max slip in z-direction
                    U2     = -(U1(1)/U1_dot)*U1
                    U2(1)  = 1.0_WP + U2(1)
-                   U2_dot = dot_product(U2,U2)+epsilon(1.0_WP)
+                   U2_dot = dot_product(U2,U2)+epsilon(1.0_WP)                
                 end select
 
                 ! U3 right-hand coordinate system (cross product)
@@ -1300,6 +1300,7 @@ contains
        call this%implicit%solve()
        A=this%implicit%sol
        call this%cfg%sync(A)
+       
     else  !< Apply filter explicitly
        ! Allocate flux arrays
        allocate(FX(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_))
@@ -1355,7 +1356,7 @@ contains
     type(part), dimension(:), allocatable :: p2
     type(MPI_Status) :: status
     logical :: avoid_overlap_,overlap
-
+    
     ! Initial number of particles
     np0_=this%np_
     this%np_new=0
@@ -1550,12 +1551,12 @@ contains
             pos(3)=random_uniform(lo=this%cfg%z(this%cfg%kmin),hi=this%cfg%z(this%cfg%kmax+1))
          end if
       end if
-
+      
     end function get_position
 
   end subroutine inject
-
-
+  
+  
   !> Calculate the CFL
   subroutine get_cfl(this,dt,cflc,cfl)
     use mpi_f08,  only: MPI_ALLREDUCE,MPI_MAX
@@ -1592,7 +1593,7 @@ contains
 
     ! If asked for, also return the maximum overall CFL
     if (present(CFL)) cfl=max(cflc,this%CFL_col)
-
+    
   end subroutine get_cfl
 
 
@@ -1790,7 +1791,7 @@ contains
       integer :: n,no,nsend,nrecv
       type(MPI_Status) :: status
       integer :: isrc,idst,ierr
-
+      
       ! Check overlap size
       if (present(nover)) then
          no=nover
@@ -1803,10 +1804,10 @@ contains
       else
          no=1
       end if
-
+      
       ! Clean up ghost array
       call this%resize_ghost(n=0); this%ng_=0
-
+      
       ! Share ghost particles in -x (no ghosts are sent here)
       nsend=0
       do n=1,this%np_
@@ -1834,7 +1835,7 @@ contains
       this%ng_=this%ng_+nrecv
       if (allocated(tosend)) deallocate(tosend)
       if (allocated(torecv)) deallocate(torecv)
-
+      
       ! Share ghost particles in +x (no ghosts are sent here)
       nsend=0
       do n=1,this%np_
@@ -1862,7 +1863,7 @@ contains
       this%ng_=this%ng_+nrecv
       if (allocated(tosend)) deallocate(tosend)
       if (allocated(torecv)) deallocate(torecv)
-
+      
       ! Share ghost particles in -y (ghosts need to be sent now)
       nsend=0
       do n=1,this%np_
@@ -1903,7 +1904,7 @@ contains
       this%ng_=this%ng_+nrecv
       if (allocated(tosend)) deallocate(tosend)
       if (allocated(torecv)) deallocate(torecv)
-
+      
       ! Share ghost particles in +y (ghosts need to be sent now - but not newly received ghosts!)
       nsend=0
       do n=1,this%np_
@@ -1944,7 +1945,7 @@ contains
       this%ng_=this%ng_+nrecv
       if (allocated(tosend)) deallocate(tosend)
       if (allocated(torecv)) deallocate(torecv)
-
+      
       ! Share ghost particles in -z (ghosts need to be sent now)
       nsend=0
       do n=1,this%np_
@@ -1985,7 +1986,7 @@ contains
       this%ng_=this%ng_+nrecv
       if (allocated(tosend)) deallocate(tosend)
       if (allocated(torecv)) deallocate(torecv)
-
+      
       ! Share ghost particles in +z (ghosts need to be sent now - but not newly received ghosts!)
       nsend=0
       do n=1,this%np_
@@ -2026,19 +2027,17 @@ contains
       this%ng_=this%ng_+nrecv
       if (allocated(tosend)) deallocate(tosend)
       if (allocated(torecv)) deallocate(torecv)
-
+      
    end subroutine share
-
-
+   
+   
    !> Adaptation of particle array size
-   subroutine resize(this,n,dontshrink)
+   subroutine resize(this,n)
       implicit none
       class(lpt), intent(inout) :: this
       integer, intent(in) :: n
-      logical, intent(in), optional :: dontshrink
       type(part), dimension(:), allocatable :: tmp
       integer :: size_now,size_new
-      logical :: dontshrink_actual
       ! Resize particle array to size n
       if (.not.allocated(this%p)) then
          ! Allocate directly to size n
@@ -2054,13 +2053,9 @@ contains
             tmp(size_now+1:)%flag=1
             call move_alloc(tmp,this%p)
          else if (n.lt.int(real(size_now,WP)*coeff_dn)) then
-            dontshrink_actual = .false.
-            if (present(dontshrink)) dontshrink_actual = dontshrink
-            if (.not. dontshrink_actual) then
-               allocate(tmp(n))
-               tmp(1:n)=this%p(1:n)
-               call move_alloc(tmp,this%p)
-            end if
+            allocate(tmp(n))
+            tmp(1:n)=this%p(1:n)
+            call move_alloc(tmp,this%p)
          end if
       end if
    end subroutine resize

@@ -10,7 +10,7 @@ module crossflow_class
    use incomp_class,      only: incomp
    use lpt_class,         only: lpt
    use timetracker_class, only: timetracker
-   use event_class,       only: periodic_event
+   use event_class,       only: event
    use monitor_class,     only: monitor
    implicit none
    private
@@ -31,9 +31,9 @@ module crossflow_class
       type(timetracker) :: time  !< Time info
       
       !> Ensight postprocessing
-      type(ensight)        :: ens_out  !< Ensight output for flow variables
-      type(periodic_event) :: ens_evt  !< Event trigger for Ensight output
-      type(partmesh)       :: pmesh    !< Particle mesh for Ensight output
+      type(ensight)  :: ens_out  !< Ensight output for flow variables
+      type(event)    :: ens_evt  !< Event trigger for Ensight output
+      type(partmesh) :: pmesh    !< Particle mesh for Ensight output
       
       !> Simulation monitor file
       type(monitor) :: mfile    !< General simulation monitoring
@@ -198,7 +198,7 @@ contains
          ! Create Ensight output from cfg
          this%ens_out=ensight(cfg=this%cfg,name='crossflow')
          ! Create event for Ensight output
-         this%ens_evt=periodic_event(time=this%time,name='Ensight output')
+         this%ens_evt=event(time=this%time,name='Ensight output')
          call param_read('Ensight output period',this%ens_evt%tper)
          ! Add variables to output
          call this%ens_out%add_particle('particles',this%pmesh)

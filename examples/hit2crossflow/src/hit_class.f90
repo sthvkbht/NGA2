@@ -6,7 +6,7 @@ module hit_class
    use incomp_class,      only: incomp
    use ensight_class,     only: ensight
    use timetracker_class, only: timetracker
-   use event_class,       only: periodic_event
+   use event_class,       only: event
    use monitor_class,     only: monitor
    implicit none
    private
@@ -22,8 +22,8 @@ module hit_class
       type(fft3d)       :: ps    !< FFT-based linear solver
       type(timetracker) :: time  !< Time info
       !> Ensight postprocessing
-      type(ensight)        :: ens_out  !< Ensight output for flow variables
-      type(periodic_event) :: ens_evt  !< Event trigger for Ensight output
+      type(ensight)  :: ens_out  !< Ensight output for flow variables
+      type(event)    :: ens_evt  !< Event trigger for Ensight output
       !> Simulation monitor file
       type(monitor) :: mfile     !< General simulation monitoring
       !> Work arrays
@@ -251,7 +251,7 @@ contains
          ! Create Ensight output from cfg
          this%ens_out=ensight(cfg=this%cfg,name='hit')
          ! Create event for Ensight output
-         this%ens_evt=periodic_event(time=this%time,name='Ensight output')
+         this%ens_evt=event(time=this%time,name='Ensight output')
          call param_read('Ensight output period',this%ens_evt%tper)
          ! Add variables to output
          call this%ens_out%add_vector('velocity',this%Ui,this%Vi,this%Wi)

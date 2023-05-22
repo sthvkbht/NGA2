@@ -11,39 +11,39 @@ module rfourier_class
    use, intrinsic :: iso_c_binding
    implicit none
    private
-
-
+   
+   
    ! Expose type/constructor/methods
    public :: rfourier
-
-
+   
+   
    !> rfourier object definition
    type :: rfourier
-
+      
       !> Pointer to our pgrid
       class(pgrid), pointer :: pg
-
+      
       !> FFT's oddball
       logical :: oddball
-
+      
       !> Available FFTs
       logical :: xfft_avail
       logical :: yfft_avail
       logical :: zfft_avail
-
+      
       !> Data storage for FFTW plans
       real(WP), dimension(:), allocatable :: in_x,out_x
       real(WP), dimension(:), allocatable :: in_y,out_y
       real(WP), dimension(:), allocatable :: in_z,out_z
-
+      
       !> FFTW plans
       type(C_PTR) :: fplan_x,bplan_x
       type(C_PTR) :: fplan_y,bplan_y
       type(C_PTR) :: fplan_z,bplan_z
-
+      
       !> Storage for transposed data
       real(WP), dimension(:,:,:), allocatable :: xtrans,ytrans,ztrans
-
+      
       !> Transpose partition - X
       integer, dimension(:), allocatable :: imin_x,imax_x
       integer, dimension(:), allocatable :: jmin_x,jmax_x
@@ -52,7 +52,7 @@ module rfourier_class
       real(WP), dimension(:,:,:,:), allocatable :: sendbuf_x,recvbuf_x
       integer :: sendcount_x,recvcount_x
       character :: xdir
-
+      
       !> Transpose partition - Y
       integer, dimension(:), allocatable :: imin_y,imax_y
       integer, dimension(:), allocatable :: jmin_y,jmax_y
@@ -61,7 +61,7 @@ module rfourier_class
       real(WP), dimension(:,:,:,:), allocatable :: sendbuf_y,recvbuf_y
       integer :: sendcount_y,recvcount_y
       character :: ydir
-
+      
       !> Transpose partition - Z
       integer, dimension(:), allocatable :: imin_z,imax_z
       integer, dimension(:), allocatable :: jmin_z,jmax_z
@@ -70,45 +70,45 @@ module rfourier_class
       real(WP), dimension(:,:,:,:), allocatable :: sendbuf_z,recvbuf_z
       integer :: sendcount_z,recvcount_z
       character :: zdir
-
+      
    contains
-
+      
       procedure :: xtransform_forward                 !< Forward Fourier transform in x
       procedure :: ytransform_forward                 !< Forward Fourier transform in y
       procedure :: ztransform_forward                 !< Forward Fourier transform in z
-
+      
       procedure :: xtransform_backward                !< Backward Fourier transform in x
       procedure :: ytransform_backward                !< Backward Fourier transform in y
       procedure :: ztransform_backward                !< Backward Fourier transform in z
-
+      
       procedure, private :: xtranspose_init           !< Transpose initialization in x
       procedure, private :: ytranspose_init           !< Transpose initialization in y
       procedure, private :: ztranspose_init           !< Transpose initialization in z
-
+      
       procedure, private :: xtranspose_forward        !< Forward transpose in x
       procedure, private :: ytranspose_forward        !< Forward transpose in y
       procedure, private :: ztranspose_forward        !< Forward transpose in z
-
+      
       procedure, private :: xtranspose_backward       !< Backward transpose in x
       procedure, private :: ytranspose_backward       !< Backward transpose in y
       procedure, private :: ztranspose_backward       !< Backward transpose in z
-
+      
       procedure :: print=>rfourier_print               !< Long-form printing of transform status
       procedure :: log=>rfourier_log                   !< Long-form logging of transform status
       final :: rfourier_destroy                        !< Destructor
-
+      
    end type rfourier
-
-
+   
+   
    !> Declare rfourier constructor
    interface rfourier
       procedure rfourier_from_args
    end interface rfourier
-
-
+   
+   
 contains
-
-
+   
+   
    !> Constructor for a rfourier object
    function rfourier_from_args(pg) result(self)
       use messager, only: die
@@ -117,10 +117,10 @@ contains
       type(rfourier) :: self
       class(pgrid), target, intent(in) :: pg
       include 'fftw3.f03'
-
+      
       ! Link the config
       self%pg=>pg
-
+      
       ! Various checks to ensure we can use this solver
       check_solver_is_useable: block
          integer :: ndim,ndcp
@@ -134,7 +134,7 @@ contains
          ndcp=count([self%pg%npx,self%pg%npy,self%pg%npz].gt.1)
          if (ndcp.ge.ndim) call die('[fft3d constructor] Need at least one NON-decomposed direction')
       end block check_solver_is_useable
-
+      
       ! Initialize transpose and FFTW plans in x
       if (self%pg%nx.gt.1.and.self%xfft_avail) then
          call self%xtranspose_init()
@@ -142,7 +142,7 @@ contains
          self%fplan_x=fftw_plan_r2r_1d(self%pg%nx,self%in_x,self%out_x,FFTW_R2HC,FFTW_MEASURE)
          self%bplan_x=fftw_plan_r2r_1d(self%pg%nx,self%in_x,self%out_x,FFTW_HC2R,FFTW_MEASURE)
       end if
-
+      
       ! Initialize transpose and FFTW plans in y
       if (self%pg%ny.gt.1.and.self%yfft_avail) then
          call self%ytranspose_init()
@@ -150,7 +150,7 @@ contains
          self%fplan_y=fftw_plan_r2r_1d(self%pg%ny,self%in_y,self%out_y,FFTW_R2HC,FFTW_MEASURE)
          self%bplan_y=fftw_plan_r2r_1d(self%pg%ny,self%in_y,self%out_y,FFTW_HC2R,FFTW_MEASURE)
       end if
-
+      
       ! Initialize transpose and FFTW plans in z
       if (self%pg%nz.gt.1.and.self%zfft_avail) then
          call self%ztranspose_init()
@@ -158,26 +158,26 @@ contains
          self%fplan_z=fftw_plan_r2r_1d(self%pg%nz,self%in_z,self%out_z,FFTW_R2HC,FFTW_MEASURE)
          self%bplan_z=fftw_plan_r2r_1d(self%pg%nz,self%in_z,self%out_z,FFTW_HC2R,FFTW_MEASURE)
       end if
-
+      
       ! Find which process owns the oddball, if any
       self%oddball=.false.
       if (all([self%xfft_avail,self%yfft_avail,self%zfft_avail]).and.&
       &   all([self%pg%iproc,self%pg%jproc,self%pg%kproc].eq.1)) self%oddball=.true.
-
+      
       ! If verbose run, log and or print grid
       if (verbose.gt.1) call self%log()
       if (verbose.gt.2) call self%print()
-
+      
    end function rfourier_from_args
-
-
+   
+   
    !> Initialize transpose tool in x
    subroutine xtranspose_init(this)
       use mpi_f08, only: MPI_AllGather,MPI_INTEGER
       implicit none
       class(rfourier), intent(inout) :: this
       integer :: ierr,ip,q,r
-
+      
       ! Determine non-decomposed direction to use for transpose
       if      (this%pg%npx.eq.1.and.this%pg%nx.gt.1) then
          this%xdir='x'
@@ -186,7 +186,7 @@ contains
       else if (this%pg%npz.eq.1.and.this%pg%nz.gt.1) then
          this%xdir='z'
       end if
-
+      
       ! Allocate global partitions
       allocate(  this%nx_x(this%pg%npx))
       allocate(  this%ny_x(this%pg%npx))
@@ -197,11 +197,11 @@ contains
       allocate(this%jmax_x(this%pg%npx))
       allocate(this%kmin_x(this%pg%npx))
       allocate(this%kmax_x(this%pg%npx))
-
+      
       ! Partition
       select case (trim(this%xdir))
       case ('x')
-
+         
          ! No transpose required, use local partition
          this%nx_x=this%pg%nx_
          this%ny_x=this%pg%ny_
@@ -212,14 +212,14 @@ contains
          this%jmax_x=this%pg%jmax_
          this%kmin_x=this%pg%kmin_
          this%kmax_x=this%pg%kmax_
-
+         
       case ('y')
-
+         
          ! Store old local indices from each processor
          call MPI_AllGather(this%pg%imin_,1,MPI_INTEGER,this%imin_x,1,MPI_INTEGER,this%pg%xcomm,ierr)
          call MPI_AllGather(this%pg%imax_,1,MPI_INTEGER,this%imax_x,1,MPI_INTEGER,this%pg%xcomm,ierr)
          this%nx_x=this%imax_x-this%imin_x+1
-
+         
          ! Partition new local indices
          do ip=1,this%pg%npx
             q=this%pg%ny/this%pg%npx
@@ -236,24 +236,24 @@ contains
          this%nz_x=this%pg%nz_
          this%kmin_x=this%pg%kmin_
          this%kmax_x=this%pg%kmax_
-
+         
          ! Variables for AllToAll communication
          this%sendcount_x=maxval(this%nx_x)*maxval(this%ny_x)*this%pg%nz_
          this%recvcount_x=maxval(this%nx_x)*maxval(this%ny_x)*this%pg%nz_
          allocate(this%sendbuf_x(maxval(this%nx_x),maxval(this%ny_x),this%pg%kmin_:this%pg%kmax_,this%pg%npx))
          allocate(this%recvbuf_x(maxval(this%nx_x),maxval(this%ny_x),this%pg%kmin_:this%pg%kmax_,this%pg%npx))
-
+         
          ! Zero out buffers
          this%sendbuf_x=0.0_WP
          this%recvbuf_x=0.0_WP
-
+         
       case ('z')
-
+         
          ! Store old local indices from each processor
          call MPI_AllGather(this%pg%imin_,1,MPI_INTEGER,this%imin_x,1,MPI_INTEGER,this%pg%xcomm,ierr)
          call MPI_AllGather(this%pg%imax_,1,MPI_INTEGER,this%imax_x,1,MPI_INTEGER,this%pg%xcomm,ierr)
          this%nx_x=this%imax_x-this%imin_x+1
-
+         
          ! Partition new local indices
          do ip=1,this%pg%npx
             q=this%pg%nz/this%pg%npx
@@ -270,32 +270,32 @@ contains
          this%ny_x=this%pg%ny_
          this%jmin_x=this%pg%jmin_
          this%jmax_x=this%pg%jmax_
-
+         
          ! Variables for AllToAll communication
          this%sendcount_x=maxval(this%nx_x)*this%pg%ny_*maxval(this%nz_x)
          this%recvcount_x=maxval(this%nx_x)*this%pg%ny_*maxval(this%nz_x)
          allocate(this%sendbuf_x(maxval(this%nx_x),this%pg%jmin_:this%pg%jmax_,maxval(this%nz_x),this%pg%npx))
          allocate(this%recvbuf_x(maxval(this%nx_x),this%pg%jmin_:this%pg%jmax_,maxval(this%nz_x),this%pg%npx))
-
+         
          ! Zero out buffers
          this%sendbuf_x=0.0_WP
          this%recvbuf_x=0.0_WP
-
+         
       end select
-
+      
       ! Allocate storage
       allocate(this%xtrans(this%pg%imin:this%pg%imax,this%jmin_x(this%pg%iproc):this%jmax_x(this%pg%iproc),this%kmin_x(this%pg%iproc):this%kmax_x(this%pg%iproc)))
-
+      
    end subroutine xtranspose_init
-
-
+   
+   
    !> Initialize transpose tool in y
    subroutine ytranspose_init(this)
       use mpi_f08, only: MPI_AllGather,MPI_INTEGER
       implicit none
       class(rfourier), intent(inout) :: this
       integer :: ierr,jp,q,r
-
+      
       ! Determine non-decomposed direction to use for transpose
       if      (this%pg%npy.eq.1.and.this%pg%ny.gt.1) then
          this%ydir='y'
@@ -304,7 +304,7 @@ contains
       else if (this%pg%npx.eq.1.and.this%pg%nx.gt.1) then
          this%ydir='x'
       end if
-
+      
       ! Allocate global partitions
       allocate(  this%nx_y(this%pg%npy))
       allocate(  this%ny_y(this%pg%npy))
@@ -315,16 +315,16 @@ contains
       allocate(this%jmax_y(this%pg%npy))
       allocate(this%kmin_y(this%pg%npy))
       allocate(this%kmax_y(this%pg%npy))
-
+      
       ! Partition
       select case (trim(this%ydir))
       case ('x')
-
+         
          ! Store old local indices from each processor
          call MPI_AllGather(this%pg%jmin_,1,MPI_INTEGER,this%jmin_y,1,MPI_INTEGER,this%pg%ycomm,ierr)
          call MPI_AllGather(this%pg%jmax_,1,MPI_INTEGER,this%jmax_y,1,MPI_INTEGER,this%pg%ycomm,ierr)
          this%ny_y=this%jmax_y-this%jmin_y+1
-
+         
          ! Partition new local indices
          do jp=1,this%pg%npy
             q=this%pg%nx/this%pg%npy
@@ -341,19 +341,19 @@ contains
          this%nz_y=this%pg%nz_
          this%kmin_y=this%pg%kmin_
          this%kmax_y=this%pg%kmax_
-
+         
          ! Variables for AllToAll communication
          this%sendcount_y=maxval(this%nx_y)*maxval(this%ny_y)*this%pg%nz_
          this%recvcount_y=maxval(this%nx_y)*maxval(this%ny_y)*this%pg%nz_
          allocate(this%sendbuf_y(maxval(this%nx_y),maxval(this%ny_y),this%pg%kmin_:this%pg%kmax_,this%pg%npy))
          allocate(this%recvbuf_y(maxval(this%nx_y),maxval(this%ny_y),this%pg%kmin_:this%pg%kmax_,this%pg%npy))
-
+         
          ! Zero out buffers
          this%sendbuf_y=0.0_WP
          this%recvbuf_y=0.0_WP
-
+         
       case ('y')
-
+         
          ! No transpose required, use local partition
          this%nx_y=this%pg%nx_
          this%ny_y=this%pg%ny_
@@ -364,14 +364,14 @@ contains
          this%jmax_y=this%pg%jmax_
          this%kmin_y=this%pg%kmin_
          this%kmax_y=this%pg%kmax_
-
+         
       case ('z')
-
+         
          ! Store old local indices from each processor
          call MPI_AllGather(this%pg%jmin_,1,MPI_INTEGER,this%jmin_y,1,MPI_INTEGER,this%pg%ycomm,ierr)
          call MPI_AllGather(this%pg%jmax_,1,MPI_INTEGER,this%jmax_y,1,MPI_INTEGER,this%pg%ycomm,ierr)
          this%ny_y=this%jmax_y-this%jmin_y+1
-
+         
          ! Partition new local indices
          do jp=1,this%pg%npy
             q=this%pg%nz/this%pg%npy
@@ -388,32 +388,32 @@ contains
          this%nx_y=this%pg%nx_
          this%imin_y=this%pg%imin_
          this%imax_y=this%pg%imax_
-
+         
          ! Variables for AllToAll communication
          this%sendcount_y=this%pg%nx_*maxval(this%ny_y)*maxval(this%nz_y)
          this%recvcount_y=this%pg%nx_*maxval(this%ny_y)*maxval(this%nz_y)
          allocate(this%sendbuf_y(this%pg%imin_:this%pg%imax_,maxval(this%ny_y),maxval(this%nz_y),this%pg%npy))
          allocate(this%recvbuf_y(this%pg%imin_:this%pg%imax_,maxval(this%ny_y),maxval(this%nz_y),this%pg%npy))
-
+         
          ! Zero out buffers
          this%sendbuf_y=0.0_WP
          this%recvbuf_y=0.0_WP
-
+         
       end select
-
+      
       ! Allocate storage
       allocate(this%ytrans(this%imin_y(this%pg%jproc):this%imax_y(this%pg%jproc),this%pg%jmin:this%pg%jmax,this%kmin_y(this%pg%jproc):this%kmax_y(this%pg%jproc)))
-
+      
    end subroutine ytranspose_init
-
-
+   
+   
    !> Initialize transpose tool in z
    subroutine ztranspose_init(this)
       use mpi_f08, only: MPI_AllGather,MPI_INTEGER
       implicit none
       class(rfourier), intent(inout) :: this
       integer :: ierr,kp,q,r
-
+      
       ! Determine non-decomposed direction to use for transpose
       if      (this%pg%npz.eq.1.and.this%pg%nz.gt.1) then
          this%zdir='z'
@@ -422,7 +422,7 @@ contains
       else if (this%pg%npy.eq.1.and.this%pg%ny.gt.1) then
          this%zdir='y'
       end if
-
+      
       ! Allocate global partitions
       allocate(  this%nx_z(this%pg%npz))
       allocate(  this%ny_z(this%pg%npz))
@@ -433,16 +433,16 @@ contains
       allocate(this%jmax_z(this%pg%npz))
       allocate(this%kmin_z(this%pg%npz))
       allocate(this%kmax_z(this%pg%npz))
-
+      
       ! Partition
       select case (trim(this%zdir))
       case ('x')
-
+         
          ! Store old local indices from each processor
          call MPI_AllGather(this%pg%kmin_,1,MPI_INTEGER,this%kmin_z,1,MPI_INTEGER,this%pg%zcomm,ierr)
          call MPI_AllGather(this%pg%kmax_,1,MPI_INTEGER,this%kmax_z,1,MPI_INTEGER,this%pg%zcomm,ierr)
          this%nz_z=this%kmax_z-this%kmin_z+1
-
+         
          ! Partition new local indices
          do kp=1,this%pg%npz
             q=this%pg%nx/this%pg%npz
@@ -459,24 +459,24 @@ contains
          this%ny_z=this%pg%ny_
          this%jmin_z=this%pg%jmin_
          this%jmax_z=this%pg%jmax_
-
+         
          ! Variables for AllToAll communication
          this%sendcount_z=maxval(this%nx_z)*this%pg%ny_*maxval(this%nz_z)
          this%recvcount_z=maxval(this%nx_z)*this%pg%ny_*maxval(this%nz_z)
          allocate(this%sendbuf_z(maxval(this%nx_z),this%pg%jmin_:this%pg%jmax_,maxval(this%nz_z),this%pg%npz))
          allocate(this%recvbuf_z(maxval(this%nx_z),this%pg%jmin_:this%pg%jmax_,maxval(this%nz_z),this%pg%npz))
-
+         
          ! Zero out buffers
          this%sendbuf_z=0.0_WP
          this%recvbuf_z=0.0_WP
-
+         
       case ('y')
-
+         
          ! Store old local indices from each processor
          call MPI_AllGather(this%pg%kmin_,1,MPI_INTEGER,this%kmin_z,1,MPI_INTEGER,this%pg%zcomm,ierr)
          call MPI_AllGather(this%pg%kmax_,1,MPI_INTEGER,this%kmax_z,1,MPI_INTEGER,this%pg%zcomm,ierr)
          this%nz_z=this%kmax_z-this%kmin_z+1
-
+         
          ! Partition new local indices
          do kp=1,this%pg%npz
             q=this%pg%ny/this%pg%npz
@@ -493,19 +493,19 @@ contains
          this%nx_z=this%pg%nx_
          this%imin_z=this%pg%imin_
          this%imax_z=this%pg%imax_
-
+         
          ! Variables for AllToAll communication
          this%sendcount_z=this%pg%nx_*maxval(this%ny_z)*maxval(this%nz_z)
          this%recvcount_z=this%pg%nx_*maxval(this%ny_z)*maxval(this%nz_z)
          allocate(this%sendbuf_z(this%pg%imin_:this%pg%imax_,maxval(this%ny_z),maxval(this%nz_z),this%pg%npz))
          allocate(this%recvbuf_z(this%pg%imin_:this%pg%imax_,maxval(this%ny_z),maxval(this%nz_z),this%pg%npz))
-
+         
          ! Zero out buffers
          this%sendbuf_z=0.0_WP
          this%recvbuf_z=0.0_WP
-
+         
       case ('z')
-
+         
          ! No transpose required, use local partition
          this%nx_z=this%pg%nx_
          this%ny_z=this%pg%ny_
@@ -516,15 +516,15 @@ contains
          this%jmax_z=this%pg%jmax_
          this%kmin_z=this%pg%kmin_
          this%kmax_z=this%pg%kmax_
-
+         
       end select
-
+      
       ! Allocate storage
       allocate(this%ztrans(this%imin_z(this%pg%kproc):this%imax_z(this%pg%kproc),this%jmin_z(this%pg%kproc):this%jmax_z(this%pg%kproc),this%pg%kmin:this%pg%kmax))
-
+      
    end subroutine ztranspose_init
-
-
+   
+   
    !> Perform forward transpose in x
    subroutine xtranspose_forward(this,A,At)
       use mpi_f08,  only: MPI_AllToAll
@@ -534,7 +534,7 @@ contains
       real(WP), dimension(this%pg%imin_:,this%pg%jmin_:,this%pg%kmin_:), intent(in) :: A
       real(WP), dimension(this%pg%imin :,this%jmin_x(this%pg%iproc):,this%kmin_x(this%pg%iproc):), intent(out) :: At
       integer :: i,j,k,ip,ii,jj,kk,ierr
-
+      
       select case (trim(this%xdir))
       case ('x')
          ! No transpose required
@@ -590,10 +590,10 @@ contains
             end do
          end do
       end select
-
+      
    end subroutine xtranspose_forward
-
-
+   
+   
    !> Perform forward transpose in y
    subroutine ytranspose_forward(this,A,At)
       use mpi_f08,  only: MPI_AllToAll
@@ -603,7 +603,7 @@ contains
       real(WP), dimension(this%pg%imin_:,this%pg%jmin_:,this%pg%kmin_:), intent(in) :: A
       real(WP), dimension(this%imin_y(this%pg%jproc):,this%pg%jmin:,this%kmin_y(this%pg%jproc):), intent(out) :: At
       integer :: i,j,k,jp,ii,jj,kk,ierr
-
+      
       select case (trim(this%ydir))
       case ('x')
          ! Transpose y=>x
@@ -659,10 +659,10 @@ contains
             end do
          end do
       end select
-
+      
    end subroutine ytranspose_forward
-
-
+   
+   
    !> Perform forward transpose in z
    subroutine ztranspose_forward(this,A,At)
       use mpi_f08,  only: MPI_AllToAll
@@ -672,7 +672,7 @@ contains
       real(WP), dimension(this%pg%imin_:,this%pg%jmin_:,this%pg%kmin_:), intent(in) :: A
       real(WP), dimension(this%imin_z(this%pg%kproc):,this%jmin_z(this%pg%kproc):,this%pg%kmin:), intent(out) :: At
       integer :: i,j,k,kp,ii,jj,kk,ierr
-
+      
       select case (trim(this%zdir))
       case ('x')
          ! Transpose z=>x
@@ -728,10 +728,10 @@ contains
          ! No transpose required
          At=A
       end select
-
+      
    end subroutine ztranspose_forward
-
-
+   
+   
    !> Perform backward transpose in x
    subroutine xtranspose_backward(this,At,A)
       use mpi_f08,  only: MPI_AllToAll
@@ -741,7 +741,7 @@ contains
       real(WP), dimension(this%pg%imin :,this%jmin_x(this%pg%iproc):,this%kmin_x(this%pg%iproc):), intent(in) :: At
       real(WP), dimension(this%pg%imin_:,this%pg%jmin_:,this%pg%kmin_:), intent(out) :: A
       integer :: i,j,k,ip,ii,jj,kk,ierr
-
+      
       select case (trim(this%xdir))
       case ('x')
          ! No transpose required
@@ -797,10 +797,10 @@ contains
             end do
          end do
       end select
-
+      
    end subroutine xtranspose_backward
-
-
+   
+   
    !> Perform backward transpose in y
    subroutine ytranspose_backward(this,At,A)
       use mpi_f08,  only: MPI_AllToAll
@@ -810,7 +810,7 @@ contains
       real(WP), dimension(this%imin_y(this%pg%jproc):,this%pg%jmin:,this%kmin_y(this%pg%jproc):), intent(in) :: At
       real(WP), dimension(this%pg%imin_:,this%pg%jmin_:,this%pg%kmin_:), intent(out) :: A
       integer :: i,j,k,jp,ii,jj,kk,ierr
-
+      
       select case (trim(this%ydir))
       case ('x')
          ! Transpose x=>y
@@ -866,10 +866,10 @@ contains
             end do
          end do
       end select
-
+      
    end subroutine ytranspose_backward
-
-
+   
+   
    !> Perform backward transpose in z
    subroutine ztranspose_backward(this,At,A)
       use mpi_f08,  only: MPI_AllToAll
@@ -879,7 +879,7 @@ contains
       real(WP), dimension(this%imin_z(this%pg%kproc):,this%jmin_z(this%pg%kproc):,this%pg%kmin:), intent(in) :: At
       real(WP), dimension(this%pg%imin_:,this%pg%jmin_:,this%pg%kmin_:), intent(out) :: A
       integer :: i,j,k,kp,ii,jj,kk,ierr
-
+      
       select case (trim(this%zdir))
       case ('x')
          ! Transpose x=>z
@@ -935,10 +935,10 @@ contains
          ! No transpose required
          A=At
       end select
-
+      
    end subroutine ztranspose_backward
-
-
+   
+   
    !> Fourier transform A in x direction
    subroutine xtransform_forward(this,A)
       use messager, only: die
@@ -964,8 +964,8 @@ contains
       ! Transpose back
       call this%xtranspose_backward(this%xtrans,A)
    end subroutine xtransform_forward
-
-
+   
+   
    !> Fourier transform A in y direction
    subroutine ytransform_forward(this,A)
       use messager, only: die
@@ -991,8 +991,8 @@ contains
       ! Transpose back
       call this%ytranspose_backward(this%ytrans,A)
    end subroutine ytransform_forward
-
-
+   
+   
    !> Fourier transform A in z direction
    subroutine ztransform_forward(this,A)
       use messager, only: die
@@ -1018,8 +1018,8 @@ contains
       ! Transpose back
       call this%ztranspose_backward(this%ztrans,A)
    end subroutine ztransform_forward
-
-
+   
+   
    !> Transform A back from Fourier space in x direction
    subroutine xtransform_backward(this,A)
       use messager, only: die
@@ -1045,8 +1045,8 @@ contains
       ! Transpose back
       call this%xtranspose_backward(this%xtrans,A)
    end subroutine xtransform_backward
-
-
+   
+   
    !> Transform A back from Fourier space in y direction
    subroutine ytransform_backward(this,A)
       use messager, only: die
@@ -1072,8 +1072,8 @@ contains
       ! Transpose back
       call this%ytranspose_backward(this%ytrans,A)
    end subroutine ytransform_backward
-
-
+   
+   
    !> Transform A back from Fourier space in z direction
    subroutine ztransform_backward(this,A)
       use messager, only: die
@@ -1099,8 +1099,8 @@ contains
       ! Transpose back
       call this%ztranspose_backward(this%ztrans,A)
    end subroutine ztransform_backward
-
-
+   
+   
    !> Destroy rfourier object
    subroutine rfourier_destroy(this)
       implicit none
@@ -1128,8 +1128,8 @@ contains
          if (allocated(this%recvbuf_z)) deallocate(this%recvbuf_z)
       end if
    end subroutine rfourier_destroy
-
-
+   
+   
    !> Log rfourier info
    subroutine rfourier_log(this)
       use string,   only: str_long
@@ -1146,8 +1146,8 @@ contains
          write(message,'("rfourier for pgrid [",a,"] available in directions [",a,"]")') trim(this%pg%name),dir; call log(message)
       end if
    end subroutine rfourier_log
-
-
+   
+   
    !> Print rfourier info to the screen
    subroutine rfourier_print(this)
       use, intrinsic :: iso_fortran_env, only: output_unit
@@ -1162,6 +1162,6 @@ contains
          write(output_unit,'("rfourier for pgrid [",a,"] available in directions [",a,"]")') trim(this%pg%name),dir
       end if
    end subroutine rfourier_print
-
-
+   
+   
 end module rfourier_class
