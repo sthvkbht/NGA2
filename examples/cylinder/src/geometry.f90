@@ -74,7 +74,7 @@ contains
          do k=cfg%kmino_,cfg%kmaxo_
             do j=cfg%jmino_,cfg%jmaxo_
                do i=cfg%imino_,cfg%imaxo_
-                  cfg%Gib(i,j,k)=Rcyl-sqrt(cfg%xm(i)**2+cfg%ym(j)**2)
+                  cfg%Gib(i,j,k)=sqrt(cfg%xm(i)**2+cfg%ym(j)**2)-Rcyl
                end do
             end do
          end do
