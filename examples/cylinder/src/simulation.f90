@@ -191,6 +191,9 @@ contains
                end do
             end do
          end do
+         if (fs%cfg%nx.eq.1) fs%U=0.0_WP
+         if (fs%cfg%ny.eq.1) fs%V=0.0_WP
+         if (fs%cfg%nz.eq.1) fs%W=0.0_WP
          call fs%cfg%sync(fs%U)
          call fs%cfg%sync(fs%V)
          call fs%cfg%sync(fs%W)
