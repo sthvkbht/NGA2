@@ -39,7 +39,7 @@ module simulation
   real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi,rho0,dRHOdt
   real(WP), dimension(:,:,:), allocatable :: srcUlp,srcVlp,srcWlp
   real(WP), dimension(:,:,:), allocatable :: tmp1,tmp2,tmp3
-  real(WP) :: visc,rho,inlet_velocity
+  real(WP) :: visc,rho
 
   !> Max timestep size for LPT
   real(WP) :: lp_dt,lp_dt_max
