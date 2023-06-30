@@ -39,7 +39,7 @@ module simulation
   real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi,rho0,dRHOdt
   real(WP), dimension(:,:,:), allocatable :: srcUlp,srcVlp,srcWlp
   real(WP), dimension(:,:,:), allocatable :: tmp1,tmp2,tmp3
-  real(WP) :: visc,rho
+  real(WP) :: visc,rho,xmax
 
   !> Max timestep size for LPT
   real(WP) :: lp_dt,lp_dt_max
@@ -179,8 +179,10 @@ contains
     initialize_lpt: block
       use random, only: random_uniform
       use mathtools, only: Pi
-      real(WP) :: dp,Wbed,VFavg,Volp
-      integer :: i,j,np
+      use mpi_f08
+      use parallel, only: MPI_REAL_WP
+      real(WP) :: dp,Wbed,VFavg,Volp,my_xmax
+      integer :: i,j,np,ierr
       logical :: overlap
       ! Create solver
       lp=lpt(cfg=cfg,name='LPT')
@@ -259,6 +261,12 @@ contains
          print*,'Number of particles', np
          print*,'Mean volume fraction',VFavg
       end if
+      ! Determine front from max particle position
+      my_xmax=0.0_WP
+      do i=1,lp%np_
+         my_xmax=max(my_xmax,lp%p(i)%pos(1))
+      end do
+      call MPI_ALLREDUCE(my_xmax,xmax,1,MPI_REAL_WP,MPI_MAX,lp%cfg%comm,ierr)
     end block initialize_lpt
 
 
@@ -379,6 +387,7 @@ contains
       call lptfile%add_column(lp_dt,'Particle dt')
       call lptfile%add_column(lp%VFmean,'VFp mean')
       call lptfile%add_column(lp%VFmax,'VFp max')
+      call lptfile%add_column(xmax,'Xp max')
       call lptfile%add_column(lp%np,'Particle number')
       call lptfile%add_column(lp%Umin,'Particle Umin')
       call lptfile%add_column(lp%Umax,'Particle Umax')
@@ -386,8 +395,6 @@ contains
       call lptfile%add_column(lp%Vmax,'Particle Vmax')
       call lptfile%add_column(lp%Wmin,'Particle Wmin')
       call lptfile%add_column(lp%Wmax,'Particle Wmax')
-      call lptfile%add_column(lp%dmin,'Particle dmin')
-      call lptfile%add_column(lp%dmax,'Particle dmax')
       call lptfile%write()
       ! Create timing monitor
       tfile=monitor(amroot=fs%cfg%amRoot,name='timing')
@@ -599,6 +606,19 @@ contains
           end block update_pmesh
           call ens_out%write_data(time%t)
        end if
+
+       ! Determine front from max particle position
+       get_xmax: block
+         use mpi_f08
+         use parallel, only: MPI_REAL_WP
+         real(WP) :: my_xmax
+         integer :: i,ierr
+         my_xmax=0.0_WP
+         do i=1,lp%np_
+            my_xmax=max(my_xmax,lp%p(i)%pos(1))
+         end do
+         call MPI_ALLREDUCE(my_xmax,xmax,1,MPI_REAL_WP,MPI_MAX,lp%cfg%comm,ierr)
+       end block get_xmax
 
        ! Perform and output monitoring
        call fs%get_max()
