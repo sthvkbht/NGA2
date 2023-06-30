@@ -39,7 +39,7 @@ module simulation
   real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi,rho0,dRHOdt
   real(WP), dimension(:,:,:), allocatable :: srcUlp,srcVlp,srcWlp
   real(WP), dimension(:,:,:), allocatable :: tmp1,tmp2,tmp3
-  real(WP) :: visc,rho,xmax
+  real(WP) :: visc,rho,xfront,ufront
 
   !> Max timestep size for LPT
   real(WP) :: lp_dt,lp_dt_max
@@ -181,7 +181,7 @@ contains
       use mathtools, only: Pi
       use mpi_f08
       use parallel, only: MPI_REAL_WP
-      real(WP) :: dp,Wbed,VFavg,Volp,my_xmax
+      real(WP) :: dp,Wbed,VFavg,Volp,my_xfront
       integer :: i,j,np,ierr
       logical :: overlap
       ! Create solver
@@ -261,12 +261,13 @@ contains
          print*,'Number of particles', np
          print*,'Mean volume fraction',VFavg
       end if
-      ! Determine front from max particle position
-      my_xmax=0.0_WP
+      ! Determine front position and velocity from max particle position
+      my_xfront=0.0_WP
       do i=1,lp%np_
-         my_xmax=max(my_xmax,lp%p(i)%pos(1))
+         my_xfront=max(my_xfront,lp%p(i)%pos(1))
       end do
-      call MPI_ALLREDUCE(my_xmax,xmax,1,MPI_REAL_WP,MPI_MAX,lp%cfg%comm,ierr)
+      ufront=0.0_WP
+      call MPI_ALLREDUCE(my_xfront,xfront,1,MPI_REAL_WP,MPI_MAX,lp%cfg%comm,ierr)
     end block initialize_lpt
 
 
@@ -387,7 +388,8 @@ contains
       call lptfile%add_column(lp_dt,'Particle dt')
       call lptfile%add_column(lp%VFmean,'VFp mean')
       call lptfile%add_column(lp%VFmax,'VFp max')
-      call lptfile%add_column(xmax,'Xp max')
+      call lptfile%add_column(xfront,'Xfront')
+      call lptfile%add_column(ufront,'Ufront')
       call lptfile%add_column(lp%np,'Particle number')
       call lptfile%add_column(lp%Umin,'Particle Umin')
       call lptfile%add_column(lp%Umax,'Particle Umax')
@@ -607,18 +609,20 @@ contains
           call ens_out%write_data(time%t)
        end if
 
-       ! Determine front from max particle position
-       get_xmax: block
+       ! Determine front position and velocity from max particle position
+       get_front: block
          use mpi_f08
          use parallel, only: MPI_REAL_WP
-         real(WP) :: my_xmax
+         real(WP) :: my_xfront
          integer :: i,ierr
-         my_xmax=0.0_WP
+         my_xfront=0.0_WP
          do i=1,lp%np_
-            my_xmax=max(my_xmax,lp%p(i)%pos(1))
+            my_xfront=max(my_xfront,lp%p(i)%pos(1))
          end do
-         call MPI_ALLREDUCE(my_xmax,xmax,1,MPI_REAL_WP,MPI_MAX,lp%cfg%comm,ierr)
-       end block get_xmax
+         ufront=xfront
+         call MPI_ALLREDUCE(my_xfront,xfront,1,MPI_REAL_WP,MPI_MAX,lp%cfg%comm,ierr)
+         ufront=(xfront-ufront)/time%dt
+       end block get_front
 
        ! Perform and output monitoring
        call fs%get_max()
