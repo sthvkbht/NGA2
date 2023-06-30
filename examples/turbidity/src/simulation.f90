@@ -99,6 +99,28 @@ contains
    end function top_of_domain
 
 
+   !> Determine front position and velocity from max particle position
+   subroutine get_front(dt)
+   use mpi_f08
+   use parallel, only: MPI_REAL_WP
+   implicit none
+   real(WP), intent(in), optional :: dt
+   real(WP) :: my_xfront,xfront_old
+   integer :: i,ierr
+   if (present(dt)) xfront_old=xfront
+   my_xfront=0.0_WP
+   do i=1,lp%np_
+      my_xfront=max(my_xfront,lp%p(i)%pos(1))
+   end do
+   call MPI_ALLREDUCE(my_xfront,xfront,1,MPI_REAL_WP,MPI_MAX,lp%cfg%comm,ierr)
+   if (present(dt)) then
+      ufront=(xfront-xfront_old)/dt
+   else
+      ufront=0.0_WP
+   end if
+ end subroutine get_front
+
+
   !> Initialization of problem solver
   subroutine simulation_init
     use param, only: param_read
@@ -179,9 +201,7 @@ contains
     initialize_lpt: block
       use random, only: random_uniform
       use mathtools, only: Pi
-      use mpi_f08
-      use parallel, only: MPI_REAL_WP
-      real(WP) :: dp,Wbed,VFavg,Volp,my_xfront
+      real(WP) :: dp,Wbed,VFavg,Volp
       integer :: i,j,np,ierr
       logical :: overlap
       ! Create solver
@@ -261,13 +281,8 @@ contains
          print*,'Number of particles', np
          print*,'Mean volume fraction',VFavg
       end if
-      ! Determine front position and velocity from max particle position
-      my_xfront=0.0_WP
-      do i=1,lp%np_
-         my_xfront=max(my_xfront,lp%p(i)%pos(1))
-      end do
-      ufront=0.0_WP
-      call MPI_ALLREDUCE(my_xfront,xfront,1,MPI_REAL_WP,MPI_MAX,lp%cfg%comm,ierr)
+      ! Compute initial front position and velocity
+      call get_front()
     end block initialize_lpt
 
 
@@ -609,22 +624,8 @@ contains
           call ens_out%write_data(time%t)
        end if
 
-       ! Determine front position and velocity from max particle position
-       get_front: block
-         use mpi_f08
-         use parallel, only: MPI_REAL_WP
-         real(WP) :: my_xfront
-         integer :: i,ierr
-         my_xfront=0.0_WP
-         do i=1,lp%np_
-            my_xfront=max(my_xfront,lp%p(i)%pos(1))
-         end do
-         ufront=xfront
-         call MPI_ALLREDUCE(my_xfront,xfront,1,MPI_REAL_WP,MPI_MAX,lp%cfg%comm,ierr)
-         ufront=(xfront-ufront)/time%dt
-       end block get_front
-
        ! Perform and output monitoring
+       call get_front(time%dt)
        call fs%get_max()
        call lp%get_max()
        call mfile%write()
