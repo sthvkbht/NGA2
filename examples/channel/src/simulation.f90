@@ -2,7 +2,8 @@
 module simulation
    use precision,         only: WP
    use geometry,          only: cfg
-   use hypre_str_class,   only: hypre_str
+   use fft2d_class,       only: fft2d
+   use ddadi_class,       only: ddadi
    use incomp_class,      only: incomp
    use timetracker_class, only: timetracker
    use ensight_class,     only: ensight
@@ -14,8 +15,8 @@ module simulation
    !> Single-phase incompressible flow solver and corresponding time tracker
    type(incomp),      public :: fs
    type(timetracker), public :: time
-   type(hypre_str),   public :: ps
-   type(hypre_str),   public :: vs
+   type(fft2d),       public :: ps
+   type(ddadi),       public :: vs
 
    !> Ensight postprocessing
    type(ensight) :: ens_out
@@ -133,15 +134,10 @@ contains
          call param_read('Dynamic viscosity',visc); fs%visc=visc
          ! Assign constant density
          call param_read('Density',fs%rho)
-         ! Configure pressure solver
-         ps=hypre_str(cfg=cfg,name='Pressure',method=pcg_pfmg,nst=7)
-         ps%maxlevel=10
-         call param_read('Pressure iteration',ps%maxit)
-         call param_read('Pressure tolerance',ps%rcvg)
+        ! Configure pressure solver
+         ps=fft2d(cfg=cfg,name='Pressure',nst=7)
          ! Configure implicit velocity solver
-         vs=hypre_str(cfg=cfg,name='Velocity',method=gmres_pfmg,nst=7)
-         call param_read('Implicit iteration',vs%maxit)
-         call param_read('Implicit tolerance',vs%rcvg)
+         vs=ddadi(cfg=cfg,name='Velocity',nst=7)
          ! Setup the solver
          call fs%setup(pressure_solver=ps,implicit_solver=vs)
          ! Initialize velocity based on specified bulk
