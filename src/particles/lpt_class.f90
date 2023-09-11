@@ -1026,7 +1026,7 @@ contains
 
        ! Compute particle slip and Reynolds number
        slip=this%p(i)%vel-fvel
-       Rep=frho*norm2(slip)*this%p(i)%d/fvisc
+       Rep=(1.0_WP-pVF)*frho*norm2(slip)*this%p(i)%d/fvisc
 
        ! Transfer to the grid
        Vp=Pi/6.0_WP*this%p(i)%d**3
@@ -1155,7 +1155,7 @@ contains
              end if
 
              ! Store the Reynolds stress
-             rhoK=rho(i,j,k)*this%ptke(i,j,k)
+             rhoK=(1.0_WP-pVF)*rho(i,j,k)*this%ptke(i,j,k)
              PTRS(1,i,j,k) = 2.0_WP*rhoK*bij(1,1)
              PTRS(2,i,j,k) = 2.0_WP*rhoK*bij(2,2)
              PTRS(3,i,j,k) = 2.0_WP*rhoK*bij(3,3)
