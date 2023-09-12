@@ -2,10 +2,10 @@
 Partition :	4 1 1
 
 # Mesh definition
-Pipe length   : 0.08
-Pipe diameter : .01
-nx :	570
-ny :	70
+Pipe length   : 0.168
+Pipe diameter : .0168
+nx :	1024
+ny :	128
 nz :	1
 
 # Time integration
@@ -24,7 +24,7 @@ Particle timestep size      : 1e-6
 Collision timescale         : 15e-6
 Particle volume fraction    : 0.02
 Particle mean diameter      : 58e-6
-Particle standard deviation : 25-6
+Particle standard deviation : 25e-6
 Particle min diameter       : 21e-6
 Particle max diameter       : 140e-6
 Particle diameter shift     : 8e-6
