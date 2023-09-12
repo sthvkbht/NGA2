@@ -57,9 +57,6 @@ contains
       ! Create masks for this config
       create_walls: block
         integer :: i,j,k
-         !cfg%VF=0.0_WP
-         !cfg%VF(cfg%imino_:cfg%imaxo_,cfg%jmin_:cfg%jmax_,cfg%kmino_:cfg%kmaxo_)=1.0_WP
-        !call cfg%sync(cfg%VF)
         cfg%VF=1.0_WP
         do k=cfg%kmino_,cfg%kmaxo_
            do j=cfg%jmino_,cfg%jmaxo_

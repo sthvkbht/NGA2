@@ -56,9 +56,15 @@ contains
       
       ! Create masks for this config
       create_walls: block
-         cfg%VF=0.0_WP
-         cfg%VF(cfg%imin_:cfg%imax_,cfg%jmin_:cfg%jmax_,cfg%kmin_:cfg%kmax_)=1.0_WP
-         call cfg%sync(cfg%VF)
+        integer :: i,j,k
+        cfg%VF=1.0_WP
+        do k=cfg%kmino_,cfg%kmaxo_
+           do j=cfg%jmino_,cfg%jmaxo_
+              do i=cfg%imino_,cfg%imaxo_
+                 if (cfg%ym(j).lt.0.0_WP.or.cfg%ym(j).gt.cfg%yL) cfg%VF(i,j,k)=0.0_WP
+              end do
+           end do
+        end do
       end block create_walls
       
    end subroutine geometry_init

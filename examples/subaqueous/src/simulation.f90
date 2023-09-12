@@ -103,8 +103,8 @@ module simulation
       deallocate(Uavg,Uavg_,vol,vol_)
     end subroutine postproc_vel
 
-     !> Function that localizes the bottom (y-) of the domain
-   function bottom_of_domain(pg,i,j,k) result(isIn)
+    !> Function that localizes the bottom (y-) of the domain
+    function bottom_of_domain(pg,i,j,k) result(isIn)
      use pgrid_class, only: pgrid
      implicit none
      class(pgrid), intent(in) :: pg
