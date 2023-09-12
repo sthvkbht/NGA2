@@ -438,7 +438,11 @@ module simulation
            real(WP) :: dt_done,mydt
            ! 'Glue' particles to bottom wall
            do i=1,lp%np_
-              if (lp%p(i)%pos(2).lt.lp%cfg%y(lp%cfg%jmin)+0.51_WP*lp%p(i)%d) lp%p(i)%id=-1
+              if (lp%p(i)%pos(2).lt.lp%cfg%y(lp%cfg%jmin)+0.51_WP*lp%p(i)%d) then
+                 lp%p(i)%id=-1
+                 lp%p(i)%vel=0.0_WP
+                 lp%p(i)%angVel=0.0_WP
+              end if
            end do
            ! Get fluid stress
            call fs%get_div_stress(resU,resV,resW)
