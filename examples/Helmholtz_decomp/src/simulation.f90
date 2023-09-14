@@ -91,7 +91,6 @@ contains
      real(WP) :: my_max,max_val
 
      ! Compute divergence and curl
-     fs%div=0.0_WP
      call fs%get_div()
      call fs%get_vorticity(vort)
      my_max=maxval(abs(fs%div(cfg%imin_+1:cfg%imax_-1,cfg%jmin_:cfg%jmax_,cfg%kmin_:cfg%kmax_)))
@@ -104,7 +103,6 @@ contains
      call fs%psolv%solve()
 
      ! Get dilataiotnal velocity: Ud=grad(phi)
-     fs%U=0.0_WP; fs%V=0.0_WP; fs%W=0.0_WP
      call fs%get_pgrad(fs%psolv%sol,fs%U,fs%V,fs%W)
      call fs%interp_vel(Udi,Vdi,Wdi)
 
@@ -123,7 +121,6 @@ contains
      end do
 
      ! Interpolate to cell faces
-     fs%U=0.0_WP; fs%V=0.0_WP; fs%W=0.0_WP
      do k=fs%cfg%kmin_,fs%cfg%kmax_
         do j=fs%cfg%jmin_,fs%cfg%jmax_
            do i=fs%cfg%imin_,fs%cfg%imax_
@@ -137,11 +134,9 @@ contains
 
      ! Get solenoidal velocity: Us=curl(A)
      call fs%get_vorticity(buf3d)
-     fs%U=0.0_WP; fs%V=0.0_WP; fs%W=0.0_WP
      Usi=buf3d(1,:,:,:); Vsi=buf3d(2,:,:,:); Wsi=buf3d(3,:,:,:)
 
      ! Interpolate to cell faces
-     fs%U=0.0_WP; fs%V=0.0_WP; fs%W=0.0_WP
      do k=fs%cfg%kmin_,fs%cfg%kmax_
         do j=fs%cfg%jmin_,fs%cfg%jmax_
            do i=fs%cfg%imin_,fs%cfg%imax_
