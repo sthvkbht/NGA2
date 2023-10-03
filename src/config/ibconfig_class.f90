@@ -140,7 +140,7 @@ contains
                   do i=this%imino_,this%imaxo_
                      lambda=sum(abs(this%Nib(:,i,j,k)))
                      eta=0.065_WP*(1.0_WP-lambda**2)+0.39_WP
-                     this%VF(i,j,k)=0.5_WP*(1.0_WP-tanh(this%Gib(i,j,k)/(lambda*eta*this%meshsize(i,j,k))))
+                     this%VF(i,j,k)=0.5_WP*(1.0_WP-tanh(-this%Gib(i,j,k)/(lambda*eta*this%meshsize(i,j,k))))
                   end do
                end do
             end do
