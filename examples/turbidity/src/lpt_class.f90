@@ -77,7 +77,6 @@ module lpt_class
 
      ! Solver parameters
      real(WP) :: nstep=1                                 !< Number of substeps (default=1)
-     character(len=str_medium), public :: drag_model     !< Drag model
      
      ! Collisional parameters
      real(WP) :: tau_col                                 !< Characteristic collision time scale
@@ -176,9 +175,6 @@ contains
     ! Allocate VF and PTKE on cfg mesh
     allocate(self%VF  (self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%VF=0.0_WP
     allocate(self%ptke(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%ptke=0.0_WP
-
-    ! Set default drag
-    self%drag_model='Tenneti'
 
     ! Allocate finite volume divergence operators
     allocate(self%div_x(0:+1,self%cfg%imin_:self%cfg%imax_,self%cfg%jmin_:self%cfg%jmax_,self%cfg%kmin_:self%cfg%kmax_)) !< Cell-centered
@@ -651,7 +647,7 @@ contains
   !> Advance the particle equations by a specified time step dt
   !> p%id=0 => no coll, no solve
   !> p%id=-1=> no coll, no move
-  subroutine advance(this,dt,U,V,W,rho,visc,stress_x,stress_y,stress_z,srcU,srcV,srcW)
+  subroutine advance(this,dt,U,V,W,rho,visc,stress_x,stress_y,stress_z,vortx,vorty,vortz,srcU,srcV,srcW)
     use mpi_f08, only : MPI_SUM,MPI_INTEGER
     use mathtools, only: Pi
     implicit none
@@ -662,40 +658,24 @@ contains
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: W         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: rho       !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: visc      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: stress_x  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: stress_y  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: stress_z  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcU   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcV   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcW   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_x  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_y  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_z  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: vortx  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: vorty  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: vortz  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: srcU   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: srcV   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: srcW   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     integer :: i,ierr
     real(WP) :: mydt,dt_done,Ip
     real(WP), dimension(3) :: acc,torque,dmom
-    real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_) :: sx,sy,sz
     type(part) :: myp,pold
 
     ! Zero out source term arrays
-    if (present(srcU)) srcU=0.0_WP
-    if (present(srcV)) srcV=0.0_WP
-    if (present(srcW)) srcW=0.0_WP
-
-    ! Get fluid stress
-    if (present(stress_x)) then
-       sx=stress_x
-    else
-       sx=0.0_WP
-    end if
-    if (present(stress_y)) then
-       sy=stress_y
-    else
-       sy=0.0_WP
-    end if
-    if (present(stress_z)) then
-       sz=stress_z
-    else
-       sz=0.0_WP
-    end if
-
+    srcU=0.0_WP
+    srcV=0.0_WP
+    srcW=0.0_WP
 
     ! Zero out number of particles removed
     this%np_out=0
@@ -716,12 +696,14 @@ contains
           ! Particle moment of inertia per unit mass
           Ip = 0.1_WP*myp%d**2
           ! Advance with Euler prediction
-          call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,stress_x=sx,stress_y=sy,stress_z=sz,p=myp,acc=acc,opt_dt=myp%dt)
+          call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,stress_x=stress_x,stress_y=stress_y,stress_z=stress_z,vortx=vortx,vorty=vorty,vortz=vortz,&
+               p=myp,acc=acc,torque=torque,opt_dt=myp%dt)
           myp%pos=pold%pos+0.5_WP*mydt*myp%vel
           myp%vel=pold%vel+0.5_WP*mydt*(acc+this%gravity+myp%Acol)
           myp%angVel=pold%angVel+0.5_WP*mydt*(torque+myp%Tcol)/Ip
           ! Correct with midpoint rule
-          call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,stress_x=sx,stress_y=sy,stress_z=sz,p=myp,acc=acc,opt_dt=myp%dt)
+          call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,stress_x=stress_x,stress_y=stress_y,stress_z=stress_z,vortx=vortx,vorty=vorty,vortz=vortz,&
+               p=myp,acc=acc,torque=torque,opt_dt=myp%dt)
           myp%pos=pold%pos+mydt*myp%vel
           myp%vel=pold%vel+mydt*(acc+this%gravity+myp%Acol)
           myp%angVel=pold%angVel+mydt*(torque+myp%Tcol)/Ip
@@ -729,9 +711,9 @@ contains
           myp%ind=this%cfg%get_ijk_global(myp%pos,myp%ind)
           ! Send source term back to the mesh
           dmom=mydt*acc*this%rho*Pi/6.0_WP*myp%d**3
-          if (this%cfg%nx.gt.1.and.present(srcU)) call this%cfg%set_scalar(Sp=-dmom(1),pos=myp%pos,i0=myp%ind(1),j0=myp%ind(2),k0=myp%ind(3),S=srcU,bc='n')
-          if (this%cfg%ny.gt.1.and.present(srcV)) call this%cfg%set_scalar(Sp=-dmom(2),pos=myp%pos,i0=myp%ind(1),j0=myp%ind(2),k0=myp%ind(3),S=srcV,bc='n')
-          if (this%cfg%nz.gt.1.and.present(srcW)) call this%cfg%set_scalar(Sp=-dmom(3),pos=myp%pos,i0=myp%ind(1),j0=myp%ind(2),k0=myp%ind(3),S=srcW,bc='n')
+          if (this%cfg%nx.gt.1) call this%cfg%set_scalar(Sp=-dmom(1),pos=myp%pos,i0=myp%ind(1),j0=myp%ind(2),k0=myp%ind(3),S=srcU,bc='n')
+          if (this%cfg%ny.gt.1) call this%cfg%set_scalar(Sp=-dmom(2),pos=myp%pos,i0=myp%ind(1),j0=myp%ind(2),k0=myp%ind(3),S=srcV,bc='n')
+          if (this%cfg%nz.gt.1) call this%cfg%set_scalar(Sp=-dmom(3),pos=myp%pos,i0=myp%ind(1),j0=myp%ind(2),k0=myp%ind(3),S=srcW,bc='n')
           ! Increment
           dt_done=dt_done+mydt
        end do
@@ -757,16 +739,10 @@ contains
     ! Sum up particles removed
     call MPI_ALLREDUCE(this%np_out,i,1,MPI_INTEGER,MPI_SUM,this%cfg%comm,ierr); this%np_out=i
 
-    ! Divide source arrays by volume, sum at boundaries, and volume filter if present
-    if (present(srcU)) then
-       srcU=srcU/this%cfg%vol; call this%cfg%syncsum(srcU); call this%filter(srcU)
-    end if
-    if (present(srcV)) then
-       srcV=srcV/this%cfg%vol; call this%cfg%syncsum(srcV); call this%filter(srcV)
-    end if
-    if (present(srcW)) then
-       srcW=srcW/this%cfg%vol; call this%cfg%syncsum(srcW); call this%filter(srcW)
-    end if
+    ! Divide source arrays by volume, sum at boundaries, and volume filter
+    srcU=srcU/this%cfg%vol; call this%cfg%syncsum(srcU); call this%filter(srcU)
+    srcV=srcV/this%cfg%vol; call this%cfg%syncsum(srcV); call this%filter(srcV)
+    srcW=srcW/this%cfg%vol; call this%cfg%syncsum(srcW); call this%filter(srcW)
 
     ! Recompute volume fraction
     call this%update_VF()
@@ -789,7 +765,7 @@ contains
 
 
   !> Calculate RHS of the particle ODEs
-  subroutine get_rhs(this,U,V,W,rho,visc,stress_x,stress_y,stress_z,p,acc,opt_dt)
+  subroutine get_rhs(this,U,V,W,rho,visc,stress_x,stress_y,stress_z,vortx,vorty,vortz,p,acc,torque,opt_dt)
     implicit none
     class(lpt), intent(inout) :: this
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: U         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
@@ -800,11 +776,14 @@ contains
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_x  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_y  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_z  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: vortx     !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: vorty     !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: vortz     !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     type(part), intent(in) :: p
-    real(WP), dimension(3), intent(out) :: acc
+    real(WP), dimension(3), intent(out) :: acc,torque
     real(WP), intent(out) :: opt_dt
     real(WP) :: fvisc,frho,pVF,fVF
-    real(WP), dimension(3) :: fvel,fstress
+    real(WP), dimension(3) :: fvel,fstress,fvort
 
     ! Interpolate fluid quantities to particle location
     interpolate: block
@@ -812,6 +791,8 @@ contains
       fvel=this%cfg%get_velocity(pos=p%pos,i0=p%ind(1),j0=p%ind(2),k0=p%ind(3),U=U,V=V,W=W)
       ! Interpolate the fluid phase stress to the particle location
       fstress=this%cfg%get_velocity(pos=p%pos,i0=p%ind(1),j0=p%ind(2),k0=p%ind(3),U=stress_x,V=stress_y,W=stress_z)
+      ! Interpolate the fluid phase stress to the particle location
+      fvort=this%cfg%get_velocity(pos=p%pos,i0=p%ind(1),j0=p%ind(2),k0=p%ind(3),U=vortx,V=vorty,W=vortz)
       ! Interpolate the fluid phase viscosity to the particle location
       fvisc=this%cfg%get_scalar(pos=p%pos,i0=p%ind(1),j0=p%ind(2),k0=p%ind(3),S=visc,bc='n')
       fvisc=fvisc+epsilon(1.0_WP)
@@ -824,31 +805,39 @@ contains
 
     ! Compute acceleration due to drag
     compute_drag: block
-      real(WP) :: Re,tau,corr,b1,b2
-      ! Particle Reynolds number
-      Re=frho*norm2(p%vel-fvel)*p%d/fvisc+epsilon(1.0_WP)
-      ! Drag correction
-      select case(trim(this%drag_model))
-      case('None','none')
-         corr=epsilon(1.0_WP)
-      case('Stokes')
-         corr=1.0_WP
-      case('Schiller-Naumann','Schiller Naumann','SN')
-         corr=1.0_WP+0.15_WP*Re**(0.687_WP)
-      case('Tenneti')
-         ! Tenneti and Subramaniam (2011)
-         b1=5.81_WP*pVF/fVF**3+0.48_WP*pVF**(1.0_WP/3.0_WP)/fVF**4
-         b2=pVF**3*Re*(0.95_WP+0.61_WP*pVF**3/fVF**2)
-         corr=fVF*(1.0_WP+0.15_WP*Re**(0.687_WP)/fVF**3+b1+b2)           
-      case default
-         corr=1.0_WP
-      end select
+      real(WP) :: Re,tau,corr
+      ! Drag correction (Tavanashad et al. IJMF, 2021)
+      Re=frho*fVF*norm2(p%vel-fvel)*p%d/fvisc
+      corr=(1.0_WP+0.15_WP*Re**(0.687_WP))*(78.96_WP*pVF**3-18.63_WP*pVF**2+9.845_WP*pVF+1.0_WP)
       ! Particle response time
       tau=this%rho*p%d**2/(18.0_WP*fvisc*corr)
       ! Return acceleration and optimal timestep size
       acc=(fvel-p%vel)/tau+fstress/this%rho
       opt_dt=tau/real(this%nstep,WP)
     end block compute_drag
+
+    ! Compute acceleration due to Saffman lift
+    compute_lift: block
+      use mathtools, only: Pi,cross_product
+      real(WP) :: omegag,Cl,Reg
+      omegag=sqrt(sum(fvort**2))
+      if (omegag.gt.0.0_WP) then
+         Reg = p%d**2*omegag*frho/fvisc
+         Cl = 9.69_WP/Pi/p%d**2/this%rho*fvisc/omegag*sqrt(Reg)
+         acc=acc+Cl*cross_product(fvel-p%vel,fvort)
+      end if
+    end block compute_lift
+
+    ! Compute added mass (this should be done last)
+    compute_added_mass: block
+      acc=acc+0.5_WP*frho/this%rho*(fstress/frho-acc)
+      !acc=(acc+0.5_WP*fstress/this%rho)/(1.0_WP+0.5_WP*frho/this%rho)
+    end block compute_added_mass
+
+    ! Compute fluid torque (assumed Stokes drag)
+    compute_torque: block
+      torque=6.0_WP*fvisc*(0.5_WP*fvort-p%angVel)/this%rho
+    end block compute_torque
 
   end subroutine get_rhs
 

@@ -206,8 +206,6 @@ contains
       logical :: overlap
       ! Create solver
       lp=lpt(cfg=cfg,name='LPT')
-      ! Get drag model from the inpit
-      call param_read('Drag model',lp%drag_model,default='Tenneti')
       ! Get particle density from the input
       call param_read('Particle density',lp%rho)
       ! Get particle diameter from the input
@@ -249,8 +247,6 @@ contains
             !print *, real(i,WP)/real(np,WP)*100.0_WP,'%'
             ! Give id
             lp%p(i)%id=int(i,8)
-            ! Set the temperature
-            lp%p(i)%T=298.15_WP
             ! Give zero velocity
             lp%p(i)%vel=0.0_WP
             ! Give zero collision force
@@ -479,7 +475,7 @@ contains
             ! Collide and advance particles
             call lp%collide(dt=mydt)
             call lp%advance(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
-                 srcU=tmp1,srcV=tmp2,srcW=tmp3)
+                 vortx=SR(1,:,:,:),vorty=SR(2,:,:,:),vortz=SR(3,:,:,:),srcU=tmp1,srcV=tmp2,srcW=tmp3)
             srcUlp=srcUlp+tmp1
             srcVlp=srcVlp+tmp2
             srcWlp=srcWlp+tmp3

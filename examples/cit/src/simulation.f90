@@ -160,7 +160,7 @@ contains
       use mathtools, only: Pi,twoPi
       use mpi_f08,  only: MPI_SUM,MPI_ALLREDUCE,MPI_INTEGER
       use parallel, only: MPI_REAL_WP
-      real(WP) :: VFavg,Vol_,sumVolp,Tp,dp,up,amp
+      real(WP) :: VFavg,Vol_,sumVolp,dp,up,amp
       integer :: i,j,k,ii,jj,kk,nn,ip,jp,kp,np,offset,ierr
       integer, dimension(:,:,:), allocatable :: npic      !< Number of particle in cell
       integer, dimension(:,:,:,:), allocatable :: ipic    !< Index of particle in cell
@@ -170,7 +170,6 @@ contains
       ! Get mean volume fraction from input
       call param_read('Particle volume fraction',VFavg)
       ! Get drag model from input
-      call param_read('Drag model',lp%drag_model,default='Tenneti')
       ! Get particle density from input
       call param_read('Particle density',lp%rho)
       ! Get particle diameter from input
@@ -181,8 +180,6 @@ contains
       ! Maximum timestep size used for particles
       call param_read('Particle timestep size',lp_dt_max,default=huge(1.0_WP))
       lp_dt=lp_dt_max
-      ! Get particle temperature from input
-      call param_read('Particle temperature',Tp,default=298.15_WP)
       ! Set collision timescale
       call param_read('Collision timescale',lp%tau_col,default=15.0_WP*time%dt)
       ! Set coefficient of restitution
@@ -238,8 +235,6 @@ contains
          ip=lp%p(i)%ind(1); jp=lp%p(i)%ind(2); kp=lp%p(i)%ind(3)
          npic(ip,jp,kp)=npic(ip,jp,kp)+1
          ipic(npic(ip,jp,kp),ip,jp,kp)=i
-         ! Set the temperature
-         lp%p(i)%T=Tp
          ! Give zero velocity
          lp%p(i)%vel=0.0_WP
          lp%p(i)%vel(1)=up

@@ -141,23 +141,19 @@ contains
     initialize_lpt: block
       use random, only: random_uniform
       use mathtools, only: Pi
-      real(WP) :: dp,Hbed,VFavg,Tp,Lpart,Lparty,Lpartz,Volp
+      real(WP) :: dp,Hbed,VFavg,Lpart,Lparty,Lpartz,Volp
       integer :: i,ix,iy,iz,np,npx,npy,npz
       ! Create solver
       lp=lpt(cfg=cfg,name='LPT')
-      ! Get drag model from the inpit
-      call param_read('Drag model',lp%drag_model,default='Tenneti')
       ! Get particle density from the input
       call param_read('Particle density',lp%rho)
       ! Get particle diameter from the input
       call param_read('Particle diameter',dp)
       ! Set filter scale to 3.5*dx
       call param_read('Filter width',lp%filter_width,default=4.0_WP*dp)
-
       ! Root process initializes particles uniformly
       call param_read('Bed height',Hbed)
       call param_read('Particle volume fraction',VFavg)
-      call param_read('Particle temperature',Tp,default=298.15_WP)
       if (lp%cfg%amRoot) then
          ! Particle volume
          Volp = Pi/6.0_WP*dp**3
@@ -184,8 +180,6 @@ contains
             lp%p(i)%id=int(i,8)
             ! Set the diameter
             lp%p(i)%d=dp
-            ! Set the temperature
-            lp%p(i)%T=Tp
             ! Give zero velocity
             lp%p(i)%vel=0.0_WP
             ! Give zero collision force

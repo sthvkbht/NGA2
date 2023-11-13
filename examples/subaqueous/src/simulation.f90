@@ -192,7 +192,6 @@ module simulation
          ! Create solver
          lp=lpt(cfg=cfg,name='LPT')
          ! Get drag model from the input
-         call param_read('Drag model',lp%drag_model,default='Tenneti')
          ! Get particle density from the input
          call param_read('Particle density',lp%rho)
          ! Get particle diameter from the input
@@ -228,8 +227,6 @@ module simulation
                !print *, real(i,WP)/real(np,WP)*100.0_WP,'%'
                ! Give id
                lp%p(i)%id=int(i,8)
-               ! Set the temperature
-               lp%p(i)%T=298.15_WP
                ! Give zero velocity
                lp%p(i)%vel=0.0_WP
                ! Give zero collision force
