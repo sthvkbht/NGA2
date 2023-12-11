@@ -830,8 +830,12 @@ contains
 
     ! Compute added mass (this should be done last)
     compute_added_mass: block
-      acc=acc+0.5_WP*frho/this%rho*(fstress/frho-acc)
-      !acc=(acc+0.5_WP*fstress/this%rho)/(1.0_WP+0.5_WP*frho/this%rho)
+      real(WP) :: Cadd
+      real(WP), dimension(3) :: dudt,dvdt
+      Cadd=0.5_WP*frho/this%rho
+      dudt=fstress/frho
+      dvdt=(acc+this%gravity+p%Acol+Cadd*dudt)/(1.0_WP+Cadd)
+      acc=acc+Cadd*(dudt-dvdt)
     end block compute_added_mass
 
     ! Compute fluid torque (assumed Stokes drag)
