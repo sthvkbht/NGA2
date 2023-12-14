@@ -275,7 +275,7 @@ contains
             bodyforcing: block
                real(WP) :: mfr
                mfr=get_bodyforce_mfr(resU)
-               bforce=(mfr_target-mfr)/time%dtmid
+               bforce=(mfr_target-mfr)/time%dt
                resU=resU+time%dt*bforce
             end block bodyforcing
 
