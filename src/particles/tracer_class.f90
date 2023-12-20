@@ -162,8 +162,6 @@ contains
        ! Correct with midpoint rule
        this%p(i)%vel=this%cfg%get_velocity(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),U=U,V=V,W=W)
        this%p(i)%pos=pold%pos+dt*this%p(i)%vel
-       ! Update acceleration
-       this%p(i)%acc=(this%p(i)%vel-pold%vel)/dt
        ! Correct the position to take into account periodicity
        if (this%cfg%xper) this%p(i)%pos(1)=this%cfg%x(this%cfg%imin)+modulo(this%p(i)%pos(1)-this%cfg%x(this%cfg%imin),this%cfg%xL)
        if (this%cfg%yper) this%p(i)%pos(2)=this%cfg%y(this%cfg%jmin)+modulo(this%p(i)%pos(2)-this%cfg%y(this%cfg%jmin),this%cfg%yL)
@@ -184,6 +182,7 @@ contains
           this%p(i)%vel=this%cfg%get_velocity(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),U=U,V=V,W=W)
           this%p(i)%rho=this%cfg%get_scalar(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=rho,bc='n')
           this%p(i)%P=this%cfg%get_scalar(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=P,bc='n')
+          this%p(i)%acc=(this%p(i)%vel-pold%vel)/dt
        end if
     end do
 
