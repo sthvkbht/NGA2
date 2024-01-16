@@ -6,10 +6,9 @@ Lx :	0.45
 Ly :	0.1518
 Lz :	0.2250
 nx :	128
-ny :	44
+ny :	46
 nz :	1
 
-Stretching : 0
 Hill height : 0.05
 
 # Fluid properties and velocity
