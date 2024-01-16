@@ -12,6 +12,7 @@ module ibconfig_class
    ! List of known available methods for calculating VF from G
    integer, parameter, public :: bigot=1
    integer, parameter, public :: sharp=2
+   integer, parameter, public :: stair=3
    
    !> Config object definition as an extension of config
    type, extends(config) :: ibconfig
@@ -173,8 +174,24 @@ contains
                end do
             end do
             call this%sync(this%VF) !< Sync needed because of the Gib interpolation above
-         end block sharp
-      case default
+          end block sharp
+       case (stair)
+          ! Get stair-step fluid volume fraction from G
+          stairstep: block
+            integer :: i,j,k
+            do k=this%kmino_,this%kmaxo_
+               do j=this%jmino_,this%jmaxo_
+                  do i=this%imino_,this%imaxo_
+                     if (this%Gib(i,j,k).gt.0.0_WP) then
+                        this%VF(i,j,k)=1.0_WP
+                     else
+                        this%VF(i,j,k)=0.0_WP
+                     end if
+                  end do
+               end do
+            end do
+          end block stairstep
+       case default
          call die('[ibconfig calculate_vf] Unknown method to calculate VF')
       end select
       
