@@ -96,8 +96,9 @@ module simulation
          ! Initialize velocity based on specified bulk
          call param_read('Ubulk',Ubulk)
          call param_read('Wbulk',Wbulk)
-         fs%U=Ubulk
-         fs%W=Wbulk
+         fs%U=0.0_WP; fs%V=0.0_WP; fs%W=0.0_WP
+         where (fs%umask.eq.0) fs%U=Ubulk
+         where (fs%wmask.eq.0) fs%W=Wbulk
          meanU=Ubulk
          meanW=Wbulk
          ! To facilitate transition
