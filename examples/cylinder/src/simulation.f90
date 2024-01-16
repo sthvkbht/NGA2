@@ -384,6 +384,7 @@ contains
          call fs%interp_vel(Ui,Vi,Wi)
          resU=srcM/fs%rho           !< Careful, we need to provide
          call fs%get_div(src=resU)  !< a volume source term to div
+         call fs%get_div()  !< a volume source term to div
 
          ! Output to ensight
          if (ens_evt%occurs()) then

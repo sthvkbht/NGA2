@@ -107,6 +107,13 @@ contains
         call cfg%calculate_normal()
         ! Get VF field
         call cfg%calculate_vf(method=sharp,allow_zero_vf=.false.)
+         do k=cfg%kmino_,cfg%kmaxo_
+           do j=cfg%jmino_,cfg%jmaxo_
+              do i=cfg%imino_,cfg%imaxo_
+                 if (cfg%ym(j).lt.cfg%y(cfg%jmin).or.cfg%ym(j).gt.cfg%y(cfg%jmax+1)) cfg%VF(i,j,k)=0.0_WP
+              end do
+           end do
+        end do
       end block create_walls
       
    end subroutine geometry_init
