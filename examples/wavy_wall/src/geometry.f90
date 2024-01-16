@@ -33,7 +33,7 @@ contains
          call param_read('Lx',Lx); call param_read('nx',nx); allocate(x(nx+1))
          call param_read('Ly',Ly); call param_read('ny',ny); allocate(y(ny+1))
          call param_read('Lz',Lz); call param_read('nz',nz); allocate(z(nz+1))
-         ! Create simple rectilinear grid in x and z, tanh-stretched grid in y
+         ! Create simple rectilinear grid in x and z, shift y by 3 cells for IB
          do i=1,nx+1
             x(i)=real(i-1,WP)/real(nx,WP)*Lx
          end do
@@ -44,7 +44,6 @@ contains
          dy=y(4)-y(3)
          y(2)=y(3)-dy
          y(1)=y(2)-dy
-
          do k=1,nz+1
             z(k)=real(k-1,WP)/real(nz,WP)*Lz-0.5_WP*Lz
          end do

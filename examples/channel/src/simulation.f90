@@ -292,10 +292,10 @@ contains
                end do
                call MPI_ALLREDUCE(myUvol,Uvol ,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr)
                call MPI_ALLREDUCE(myU   ,meanU,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr); meanU=meanU/Uvol
-               where (fs%umask.eq.0) resU=resU+Ubulk-meanU
+               where (fs%umask.eq.0) resU=resU+fs%rho*(Ubulk-meanU)
                call MPI_ALLREDUCE(myWvol,Wvol ,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr)
                call MPI_ALLREDUCE(myW   ,meanW,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr); meanW=meanW/Wvol
-               where (fs%wmask.eq.0) resW=resW+Wbulk-meanW
+               where (fs%wmask.eq.0) resW=resW+fs%rho*(Wbulk-meanW)
             end block forcing
 
             ! Form implicit residuals

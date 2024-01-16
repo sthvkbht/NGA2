@@ -53,7 +53,7 @@ module simulation
      integer, intent(in) :: i,j,k
      logical :: isIn
      isIn=.false.
-     if (j.eq.pg%jmax+1) isIn=.true.
+     if (j.ge.pg%jmax+1) isIn=.true.
    end function top_of_domain
 
 
@@ -112,8 +112,8 @@ module simulation
          ! Initialize velocity based on specified bulk
          call param_read('Ubulk',Ubulk)
          call param_read('Wbulk',Wbulk)
-         where (fs%umask.eq.0) fs%U=Ubulk
-         where (fs%wmask.eq.0) fs%W=Wbulk
+         fs%U=Ubulk
+         fs%W=Wbulk
          meanU=Ubulk
          meanW=Wbulk
          ! To facilitate transition
@@ -273,25 +273,21 @@ module simulation
                do k=fs%cfg%kmin_,fs%cfg%kmax_
                   do j=fs%cfg%jmin_,fs%cfg%jmax_
                      do i=fs%cfg%imin_,fs%cfg%imax_
-                        if (fs%umask(i,j,k).eq.0) then
-                           VFx=sum(fs%itpr_x(:,i,j,k)*cfg%VF(i-1:i,j,k))
-                           myU   =myU   +fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*VFx*(2.0_WP*fs%U(i,j,k)-fs%Uold(i,j,k))
-                           myUvol=myUvol+fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*VFx
-                        end if
-                        if (fs%wmask(i,j,k).eq.0) then
-                           VFz=sum(fs%itpr_z(:,i,j,k)*cfg%VF(i,j,k-1:k))
-                           myW   =myW   +fs%cfg%dx(i)*fs%cfg%dy(j)*fs%cfg%dzm(k)*VFz*(2.0_WP*fs%W(i,j,k)-fs%Wold(i,j,k))
-                           myWvol=myWvol+fs%cfg%dx(i)*fs%cfg%dy(j)*fs%cfg%dzm(k)*VFz
-                        end if
+                        VFx=sum(fs%itpr_x(:,i,j,k)*cfg%VF(i-1:i,j,k))
+                        myU   =myU   +fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*VFx*(2.0_WP*fs%U(i,j,k)-fs%Uold(i,j,k))
+                        myUvol=myUvol+fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*VFx
+                        VFz=sum(fs%itpr_z(:,i,j,k)*cfg%VF(i,j,k-1:k))
+                        myW   =myW   +fs%cfg%dx(i)*fs%cfg%dy(j)*fs%cfg%dzm(k)*VFz*(2.0_WP*fs%W(i,j,k)-fs%Wold(i,j,k))
+                        myWvol=myWvol+fs%cfg%dx(i)*fs%cfg%dy(j)*fs%cfg%dzm(k)*VFz
                      end do
                   end do
                end do
                call MPI_ALLREDUCE(myUvol,Uvol ,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr)
                call MPI_ALLREDUCE(myU   ,meanU,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr); meanU=meanU/Uvol
-               where (fs%umask.eq.0) resU=resU+Ubulk-meanU
+               resU=resU+fs%rho*(Ubulk-meanU)
                call MPI_ALLREDUCE(myWvol,Wvol ,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr)
                call MPI_ALLREDUCE(myW   ,meanW,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr); meanW=meanW/Wvol
-               where (fs%wmask.eq.0) resW=resW+Wbulk-meanW
+               resW=resW+fs%rho*(Wbulk-meanW)
             end block forcing
 
             ! Form implicit residuals
