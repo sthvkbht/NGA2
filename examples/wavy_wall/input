@@ -2,20 +2,20 @@
 Partition :	4 1 1
 
 # Mesh definition
-Lx :	0.4950
-Ly :	0.1670
-Lz :	0.2475
+Lx :	0.45
+Ly :	0.1518
+Lz :	0.2250
 nx :	128
 ny :	44
 nz :	1
 
 Stretching : 0
-Hill height : 0.0557
+Hill height : 0.05
 
 # Fluid properties and velocity
-Dynamic viscosity :   8.90e-4
-Density :             1000
-Ubulk : 0.0895!2.147
+Dynamic viscosity :   8.53e-4
+Density :             996.57
+Ubulk : 4.79e-2
 Wbulk : 0
 Perturbation : 0.1
 
