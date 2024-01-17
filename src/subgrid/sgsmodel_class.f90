@@ -388,12 +388,6 @@ contains
       do k=this%cfg%kmin_,this%cfg%kmax_
          do j=this%cfg%jmin_,this%cfg%jmax_
             do i=this%cfg%imin_,this%cfg%imax_
-               ! Skip wall cells
-               if (this%cfg%VF(i,j,k).lt.epsilon(1.0_WP)) then
-                  this%LM(i,j,k)=0.0_WP
-                  this%MM(i,j,k)=0.0_WP
-                  cycle
-               end if
                ! Simple Lagrangian backtracking
                pos(1)=this%cfg%xm(i)-Ui(i,j,k)*dt
                pos(2)=this%cfg%ym(j)-Vi(i,j,k)*dt

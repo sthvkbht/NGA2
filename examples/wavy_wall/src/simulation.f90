@@ -220,8 +220,8 @@ module simulation
            call fs%get_gradu(gradU)
            call fs%interp_vel(Ui,Vi,Wi)
            call fs%get_strainrate(SR)
-           call sgs%get_visc(type=vreman,dt=time%dtold,rho=resU,gradu=gradU,Ui=Ui,Vi=Vi,Wi=Wi,SR=SR)
-           sgs%visc=sgs%visc*fs%cfg%vf
+           call sgs%get_visc(type=dynamic_smag,dt=time%dtold,rho=resU,gradu=gradU,Ui=Ui,Vi=Vi,Wi=Wi,SR=SR)
+           !sgs%visc=sgs%visc*fs%cfg%vf
            where (cfg%Gib.lt.0.0_WP) sgs%visc=0.0_WP
            fs%visc=visc+sgs%visc
          end block sgs_modeling
