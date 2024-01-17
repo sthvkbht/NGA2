@@ -670,7 +670,7 @@ contains
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcW   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     integer :: i,ierr
     real(WP) :: mydt,dt_done,Ip
-    real(WP), dimension(3) :: acc,torque,dmom
+    real(WP), dimension(3) :: acc,dmom
     real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_) :: sx,sy,sz
     type(part) :: myp,pold
 
@@ -696,7 +696,6 @@ contains
        sz=0.0_WP
     end if
 
-
     ! Zero out number of particles removed
     this%np_out=0
 
@@ -719,12 +718,12 @@ contains
           call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,stress_x=sx,stress_y=sy,stress_z=sz,p=myp,acc=acc,opt_dt=myp%dt)
           myp%pos=pold%pos+0.5_WP*mydt*myp%vel
           myp%vel=pold%vel+0.5_WP*mydt*(acc+this%gravity+myp%Acol)
-          myp%angVel=pold%angVel+0.5_WP*mydt*(torque+myp%Tcol)/Ip
+          myp%angVel=pold%angVel+0.5_WP*mydt*myp%Tcol/Ip
           ! Correct with midpoint rule
           call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,stress_x=sx,stress_y=sy,stress_z=sz,p=myp,acc=acc,opt_dt=myp%dt)
           myp%pos=pold%pos+mydt*myp%vel
           myp%vel=pold%vel+mydt*(acc+this%gravity+myp%Acol)
-          myp%angVel=pold%angVel+mydt*(torque+myp%Tcol)/Ip
+          myp%angVel=pold%angVel+mydt*myp%Tcol/Ip
           ! Relocalize
           myp%ind=this%cfg%get_ijk_global(myp%pos,myp%ind)
           ! Send source term back to the mesh
