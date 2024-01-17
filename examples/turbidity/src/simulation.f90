@@ -298,27 +298,8 @@ contains
 
     ! Initialize our velocity field
     initialize_velocity: block
-      use lowmach_class, only: bcond
-      type(bcond), pointer :: mybc
-      integer :: n,i,j,k
       ! Zero initial field
       fs%U=0.0_WP; fs%V=0.0_WP; fs%W=0.0_WP
-      ! Set no-slip walls
-      call fs%get_bcond('left',mybc)
-      do n=1,mybc%itr%no_
-         i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-         fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
-      end do
-      call fs%get_bcond('right',mybc)
-      do n=1,mybc%itr%no_
-         i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-         fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
-      end do
-      call fs%get_bcond('bottom',mybc)
-      do n=1,mybc%itr%no_
-         i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-         fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
-      end do
       ! Set density from particle volume fraction and store initial density
       fs%rho=rho*(1.0_WP-lp%VF)
       rho0=rho
@@ -559,20 +540,20 @@ contains
             call fs%get_bcond('bottom',mybc)
             do n=1,mybc%itr%no_
                i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-               fs%rhoU(i,j,k)=0.0_WP; fs%rhoV(i,j,k)=0.0_WP; fs%rhoW(i,j,k)=0.0_WP
-               fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
+               fs%rhoV(i,j,k)=0.0_WP
+               fs%V(i,j,k)=0.0_WP
             end do
             call fs%get_bcond('left',mybc)
             do n=1,mybc%itr%no_
                i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-               fs%rhoU(i,j,k)=0.0_WP; fs%rhoV(i,j,k)=0.0_WP; fs%rhoW(i,j,k)=0.0_WP
-               fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
+               fs%rhoU(i,j,k)=0.0_WP
+               fs%U(i,j,k)=0.0_WP
             end do
             call fs%get_bcond('right',mybc)
             do n=1,mybc%itr%no_
                i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-               fs%rhoU(i,j,k)=0.0_WP; fs%rhoV(i,j,k)=0.0_WP; fs%rhoW(i,j,k)=0.0_WP
-               fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
+               fs%rhoU(i,j,k)=0.0_WP
+               fs%U(i,j,k)=0.0_WP
             end do
           end block dirichlet_velocity
 

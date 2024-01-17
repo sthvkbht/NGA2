@@ -147,7 +147,7 @@ module simulation
          fs=lowmach(cfg=cfg,name='Variable density low Mach NS')
          ! Define boundary conditions
          call fs%add_bcond(name='bottom',type=dirichlet,locator=bottom_of_domain,face='y',dir=-1,canCorrect=.false.)
-         call fs%add_bcond(name='top',type=dirichlet,locator=top_of_domain,face='y',dir=+1,canCorrect=.true. )
+         call fs%add_bcond(name='top',type=dirichlet,locator=top_of_domain,face='y',dir=+1,canCorrect=.false. )
          ! Assign constant density
          call param_read('Density',rho); fs%rho=rho
          ! Assign constant viscosity
@@ -187,7 +187,7 @@ module simulation
          use random, only: random_uniform
          use mathtools, only: Pi
          real(WP) :: dp
-         integer :: i,j,np,ierr
+         integer :: i,j,np
          logical :: overlap
          ! Create solver
          lp=lpt(cfg=cfg,name='LPT')
@@ -290,12 +290,12 @@ module simulation
         call fs%get_bcond('bottom',mybc)
         do n=1,mybc%itr%no_
            i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-           fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
+           fs%V(i,j,k)=0.0_WP
         end do
         call fs%get_bcond('top',mybc)
         do n=1,mybc%itr%no_
            i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-           fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
+           fs%V(i,j,k)=0.0_WP
         end do
         ! Set density from particle volume fraction and store initial density
         fs%rho=rho*(1.0_WP-lp%VF)
@@ -563,14 +563,14 @@ module simulation
             call fs%get_bcond('bottom',mybc)
             do n=1,mybc%itr%no_
                i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-               fs%rhoU(i,j,k)=0.0_WP; fs%rhoV(i,j,k)=0.0_WP; fs%rhoW(i,j,k)=0.0_WP
-               fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
+               fs%rhoV(i,j,k)=0.0_WP
+               fs%V(i,j,k)=0.0_WP
             end do
              call fs%get_bcond('top',mybc)
             do n=1,mybc%itr%no_
                i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-               fs%rhoU(i,j,k)=0.0_WP; fs%rhoV(i,j,k)=0.0_WP; fs%rhoW(i,j,k)=0.0_WP
-               fs%U(i,j,k)=0.0_WP; fs%V(i,j,k)=0.0_WP; fs%W(i,j,k)=0.0_WP
+               fs%rhoV(i,j,k)=0.0_WP
+               fs%V(i,j,k)=0.0_WP
             end do
           end block dirichlet_velocity
 
