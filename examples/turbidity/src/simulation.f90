@@ -54,39 +54,6 @@ module simulation
 
 contains
 
-  !> Function that localizes the left (x-) of the domain
-   function left_of_domain(pg,i,j,k) result(isIn)
-     use pgrid_class, only: pgrid
-     implicit none
-     class(pgrid), intent(in) :: pg
-     integer, intent(in) :: i,j,k
-     logical :: isIn
-     isIn=.false.
-     if (i.eq.pg%imin) isIn=.true.
-   end function left_of_domain
-
-   !> Function that localizes the right (x+) of the domain
-   function right_of_domain(pg,i,j,k) result(isIn)
-     use pgrid_class, only: pgrid
-     implicit none
-     class(pgrid), intent(in) :: pg
-     integer, intent(in) :: i,j,k
-     logical :: isIn
-     isIn=.false.
-     if (i.eq.pg%imax+1) isIn=.true.
-   end function right_of_domain
-  
-   !> Function that localizes the bottom (y-) of the domain
-   function bottom_of_domain(pg,i,j,k) result(isIn)
-     use pgrid_class, only: pgrid
-     implicit none
-     class(pgrid), intent(in) :: pg
-     integer, intent(in) :: i,j,k
-     logical :: isIn
-     isIn=.false.
-     if (j.eq.pg%jmin) isIn=.true.
-   end function bottom_of_domain
-
    !> Function that localizes the top (y+) of the domain
    function top_of_domain(pg,i,j,k) result(isIn)
      use pgrid_class, only: pgrid
@@ -156,9 +123,6 @@ contains
       ! Create flow solver
       fs=lowmach(cfg=cfg,name='Variable density low Mach NS')
       ! Define boundary conditions
-      call fs%add_bcond(name='left',type=dirichlet,locator=left_of_domain,face='x',dir=-1,canCorrect=.false.)
-      call fs%add_bcond(name='right',type=dirichlet,locator=right_of_domain,face='x',dir=+1,canCorrect=.false.)
-      call fs%add_bcond(name='bottom',type=dirichlet,locator=bottom_of_domain,face='y',dir=-1,canCorrect=.false.)
       call fs%add_bcond(name='top',type=slip,locator=top_of_domain,face='y',dir=+1,canCorrect=.true. )
       ! Assign constant density
       call param_read('Density',rho); fs%rho=rho
@@ -233,8 +197,8 @@ contains
             overlap=.true.
             do while(overlap)
                lp%p(i)%pos=[random_uniform(0.5_WP*dp,Wbed),&
-                    &            random_uniform(lp%cfg%y(lp%cfg%jmin)+0.5_WP*dp,lp%cfg%y(lp%cfg%jmax+1)-0.5_WP*dp),&
-                    &            random_uniform(lp%cfg%z(lp%cfg%kmin),lp%cfg%z(lp%cfg%kmax+1))]
+               &            random_uniform(lp%cfg%y(lp%cfg%jmin)+0.5_WP*dp,lp%cfg%y(lp%cfg%jmax+1)-0.5_WP*dp),&
+               &            random_uniform(lp%cfg%z(lp%cfg%kmin),lp%cfg%z(lp%cfg%kmax+1))]
                if (lp%cfg%nz.eq.1) lp%p(i)%pos(3)=lp%cfg%zm(lp%cfg%kmin_)
                overlap=.false.
                check: do j=1,i-1
@@ -511,9 +475,9 @@ contains
             do k=fs%cfg%kmin_,fs%cfg%kmax_
                do j=fs%cfg%jmin_,fs%cfg%jmax_
                   do i=fs%cfg%imin_,fs%cfg%imax_
-                     resU(i,j,k)=resU(i,j,k)+sum(fs%itpr_x(:,i,j,k)*srcUlp(i-1:i,j,k))
-                     resV(i,j,k)=resV(i,j,k)+sum(fs%itpr_y(:,i,j,k)*srcVlp(i,j-1:j,k))
-                     resW(i,j,k)=resW(i,j,k)+sum(fs%itpr_z(:,i,j,k)*srcWlp(i,j,k-1:k))
+                     if (fs%umask(i,j,k).eq.0) resU(i,j,k)=resU(i,j,k)+sum(fs%itpr_x(:,i,j,k)*srcUlp(i-1:i,j,k))
+                     if (fs%vmask(i,j,k).eq.0) resV(i,j,k)=resV(i,j,k)+sum(fs%itpr_y(:,i,j,k)*srcVlp(i,j-1:j,k))
+                     if (fs%wmask(i,j,k).eq.0) resW(i,j,k)=resW(i,j,k)+sum(fs%itpr_z(:,i,j,k)*srcWlp(i,j,k-1:k))
                   end do
                end do
             end do
@@ -531,31 +495,6 @@ contains
           call fs%apply_bcond(time%tmid,time%dtmid)
           call fs%rho_multiply()
           call fs%apply_bcond(time%tmid,time%dtmid)
-
-          ! Reset Dirichlet BCs
-          dirichlet_velocity: block
-            use lowmach_class, only: bcond
-            type(bcond), pointer :: mybc
-            integer :: n,i,j,k
-            call fs%get_bcond('bottom',mybc)
-            do n=1,mybc%itr%no_
-               i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-               fs%rhoV(i,j,k)=0.0_WP
-               fs%V(i,j,k)=0.0_WP
-            end do
-            call fs%get_bcond('left',mybc)
-            do n=1,mybc%itr%no_
-               i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-               fs%rhoU(i,j,k)=0.0_WP
-               fs%U(i,j,k)=0.0_WP
-            end do
-            call fs%get_bcond('right',mybc)
-            do n=1,mybc%itr%no_
-               i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-               fs%rhoU(i,j,k)=0.0_WP
-               fs%U(i,j,k)=0.0_WP
-            end do
-          end block dirichlet_velocity
 
           wt_vel%time=wt_vel%time+parallel_time()-wt_vel%time_in
 

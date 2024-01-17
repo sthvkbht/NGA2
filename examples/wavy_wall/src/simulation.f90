@@ -45,29 +45,6 @@ module simulation
  contains
 
 
-   !> Function that localizes the bottom (y-) of the domain
-   function bottom_of_domain(pg,i,j,k) result(isIn)
-     use pgrid_class, only: pgrid
-     implicit none
-     class(pgrid), intent(in) :: pg
-     integer, intent(in) :: i,j,k
-     logical :: isIn
-     isIn=.false.
-     if (j.eq.pg%jmin) isIn=.true.
-   end function bottom_of_domain
-
-   !> Function that localizes the top (y+) of the domain
-   function top_of_domain(pg,i,j,k) result(isIn)
-     use pgrid_class, only: pgrid
-     implicit none
-     class(pgrid), intent(in) :: pg
-     integer, intent(in) :: i,j,k
-     logical :: isIn
-     isIn=.false.
-     if (j.eq.pg%jmax+1) isIn=.true.
-   end function top_of_domain
-
-
    !> Initialization of problem solver
    subroutine simulation_init
       use param, only: param_read
@@ -102,14 +79,10 @@ module simulation
       create_and_initialize_flow_solver: block
          use mathtools, only: twoPi
          use random,    only: random_uniform
-         use incomp_class,   only: dirichlet, bcond
-         integer :: i,j,k,n
+         integer :: i,j,k
          real(WP) :: amp,vel
          ! Create flow solver
          fs=incomp(cfg=cfg,name='NS solver')
-         ! Define boundary conditions
-         call fs%add_bcond(name='bottom',type=dirichlet,locator=bottom_of_domain,face='y',dir=-1,canCorrect=.false.)
-         call fs%add_bcond(name='top',type=dirichlet,locator=top_of_domain,face='y',dir=+1,canCorrect=.false. )
          ! Assign constant viscosity
          call param_read('Dynamic viscosity',visc); fs%visc=visc
          ! Assign constant density
@@ -327,23 +300,6 @@ module simulation
 
             ! Apply other boundary conditions on the resulting fields
             call fs%apply_bcond(time%t,time%dt)
-
-            ! Reset Dirichlet BCs
-            dirichlet_velocity: block
-              use incomp_class, only: bcond
-              type(bcond), pointer :: mybc
-              integer :: n,i,j,k
-              call fs%get_bcond('bottom',mybc)
-              do n=1,mybc%itr%no_
-                 i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-                 fs%V(i,j,k)=0.0_WP
-              end do
-              call fs%get_bcond('top',mybc)
-              do n=1,mybc%itr%no_
-                 i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-                 fs%V(i,j,k)=0.0_WP
-              end do
-            end block dirichlet_velocity
 
             ! Solve Poisson equation
             call fs%correct_mfr()
