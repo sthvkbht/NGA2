@@ -1,15 +1,16 @@
 # NGA location if not yet defined
+
 NGA_HOME ?= ../..
 
 # Compilation parameters
 PRECISION = DOUBLE
 USE_MPI   = TRUE
-USE_HYPRE = TRUE
-USE_LAPACK= TRUE
+USE_HYPRE = FALSE
+USE_LAPACK= FALSE
 USE_FFTW  = TRUE
 USE_IRL   = FALSE
 PROFILE   = FALSE
-DEBUG     = TRUE
+DEBUG     = FALSE
 COMP      = gnu
 EXEBASE   = nga
 

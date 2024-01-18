@@ -1,7 +1,7 @@
 !> Various definitions and tools for running an NGA2 simulation
 module simulation
    use precision,         only: WP
-   use geometry,          only: cfg,D,get_VF
+   use geometry,          only: cfg,D
    use fft3d_class,       only: fft3d
    use ddadi_class,       only: ddadi
    use incomp_class,      only: incomp
@@ -33,49 +33,11 @@ module simulation
    real(WP), dimension(:,:,:,:,:), allocatable :: gradU
    real(WP), dimension(:,:,:), allocatable :: resU,resV,resW
    real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi
-   real(WP), dimension(:,:,:), allocatable :: G
-   real(WP) :: visc,mfr_target,mfr,bforce
+   real(WP) :: visc,Ubulk,meanU,bforce
 
+ contains
 
-contains
-
-
-   !> Compute massflow rate
-   function get_bodyforce_mfr(srcU) result(mfr)
-      use mpi_f08,  only: MPI_SUM,MPI_ALLREDUCE
-      use parallel, only: MPI_REAL_WP
-      real(WP), dimension(fs%cfg%imino_:,fs%cfg%jmino_:,fs%cfg%kmino_:), intent(in), optional :: srcU !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-      integer :: i,j,k,ierr
-      real(WP) :: vol,myRhoU,myUvol,Uvol,mfr
-      myRhoU=0.0_WP; myUvol=0.0_WP
-      if (present(srcU)) then
-         do k=fs%cfg%kmin_,fs%cfg%kmax_
-            do j=fs%cfg%jmin_,fs%cfg%jmax_
-               do i=fs%cfg%imin_,fs%cfg%imax_
-                  vol=fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*get_VF(i,j,k,'U')
-                  myUvol=myUvol+vol
-                  !myRhoU=myRhoU+vol*(2.0_WP*fs%U(i,j,k)-fs%Uold(i,j,k))*fs%rho+vol*srcU(i,j,k)
-                  myRhoU=myRhoU+vol*(fs%rho*fs%U(i,j,k)+srcU(i,j,k))
-               end do
-            end do
-         end do
-      else
-         do k=fs%cfg%kmin_,fs%cfg%kmax_
-            do j=fs%cfg%jmin_,fs%cfg%jmax_
-               do i=fs%cfg%imin_,fs%cfg%imax_
-                  vol=fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*get_VF(i,j,k,'U')
-                  myUvol=myUvol+vol
-                  !myRhoU=myRhoU+vol*(2.0_WP*fs%U(i,j,k)-fs%Uold(i,j,k))*fs%rho
-                  myRhoU=myRhoU+vol*fs%rho*fs%U(i,j,k)
-               end do
-            end do
-         end do
-      end if
-      call MPI_ALLREDUCE(myUvol,Uvol,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr)
-      call MPI_ALLREDUCE(myRhoU,mfr ,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr); mfr=mfr/Uvol
-   end function get_bodyforce_mfr
-
-
+   
    !> Initialization of problem solver
    subroutine simulation_init
       use param, only: param_read
@@ -118,55 +80,47 @@ contains
          allocate(Ui  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate(Vi  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate(Wi  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-         allocate(G   (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       end block allocate_work_arrays
 
 
       ! Initialize our velocity field
       initialize_velocity: block
-         use mathtools, only: twoPi
-         use random,    only: random_uniform
-         integer :: i,j,k
-         real(WP) :: Ubulk,amp
-         ! Initial fields
-         call param_read('Bulk velocity',Ubulk)
-         fs%U=Ubulk; fs%V=0.0_WP; fs%W=0.0_WP; fs%P=0.0_WP
-         ! For faster transition
-         call param_read('Fluctuation amp',amp,default=0.0_WP)
-         do k=fs%cfg%kmin_,fs%cfg%kmax_
-            do j=fs%cfg%jmin_,fs%cfg%jmax_
-               do i=fs%cfg%imin_,fs%cfg%imax_
-                  fs%U(i,j,k)=fs%U(i,j,k)+Ubulk*random_uniform(lo=-0.5_WP*amp,hi=0.5_WP*amp)+amp*Ubulk*cos(8.0_WP*twoPi*fs%cfg%zm(k)/fs%cfg%zL)*cos(8.0_WP*twoPi*fs%cfg%ym(j)/fs%cfg%yL)
-                  fs%V(i,j,k)=fs%V(i,j,k)+Ubulk*random_uniform(lo=-0.5_WP*amp,hi=0.5_WP*amp)+amp*Ubulk*cos(8.0_WP*twoPi*fs%cfg%xm(i)/fs%cfg%xL)
-                  fs%W(i,j,k)=fs%W(i,j,k)+Ubulk*random_uniform(lo=-0.5_WP*amp,hi=0.5_WP*amp)+amp*Ubulk*cos(8.0_WP*twoPi*fs%cfg%xm(i)/fs%cfg%xL)
-               end do
-            end do
-         end do
-         call fs%cfg%sync(fs%U)
-         call fs%cfg%sync(fs%V)
-         call fs%cfg%sync(fs%W)
-         ! Compute cell-centered velocity
-         call fs%interp_vel(Ui,Vi,Wi)
-         ! Compute divergence
-         call fs%get_div()
-         ! Get target MFR and zero bodyforce
-         mfr=get_bodyforce_mfr()
-         mfr_target=mfr
-         bforce=0.0_WP
+        use mathtools, only: twoPi
+        use random,    only: random_uniform
+        integer :: i,j,k
+        real(WP) :: amp,VFx,VFy,VFz
+        ! Initial fields
+        call param_read('Bulk velocity',Ubulk)
+        fs%U=Ubulk; fs%V=0.0_WP; fs%W=0.0_WP; fs%P=0.0_WP
+        meanU=Ubulk
+        bforce=0.0_WP
+        ! For faster transition
+        call param_read('Fluctuation amp',amp,default=0.0_WP)
+        do k=fs%cfg%kmin_,fs%cfg%kmax_
+           do j=fs%cfg%jmin_,fs%cfg%jmax_
+              do i=fs%cfg%imin_,fs%cfg%imax_
+                 ! Add fluctuations for faster transition
+                 fs%U(i,j,k)=fs%U(i,j,k)+Ubulk*random_uniform(lo=-0.5_WP*amp,hi=0.5_WP*amp)+amp*Ubulk*cos(8.0_WP*twoPi*fs%cfg%zm(k)/fs%cfg%zL)*cos(8.0_WP*twoPi*fs%cfg%ym(j)/fs%cfg%yL)
+                 fs%V(i,j,k)=fs%V(i,j,k)+Ubulk*random_uniform(lo=-0.5_WP*amp,hi=0.5_WP*amp)+amp*Ubulk*cos(8.0_WP*twoPi*fs%cfg%xm(i)/fs%cfg%xL)
+                 fs%W(i,j,k)=fs%W(i,j,k)+Ubulk*random_uniform(lo=-0.5_WP*amp,hi=0.5_WP*amp)+amp*Ubulk*cos(8.0_WP*twoPi*fs%cfg%xm(i)/fs%cfg%xL)
+                 ! Remove values in the wall
+                 VFx=sum(fs%itpr_x(:,i,j,k)*cfg%VF(i-1:i,j,k))
+                 VFy=sum(fs%itpr_y(:,i,j,k)*cfg%VF(i,j-1:j,k))
+                 VFz=sum(fs%itpr_z(:,i,j,k)*cfg%VF(i,j,k-1:k))
+                 fs%U(i,j,k)=fs%U(i,j,k)*VFx
+                 fs%V(i,j,k)=fs%V(i,j,k)*VFy
+                 fs%W(i,j,k)=fs%W(i,j,k)*VFz
+              end do
+           end do
+        end do
+        call fs%cfg%sync(fs%U)
+        call fs%cfg%sync(fs%V)
+        call fs%cfg%sync(fs%W)
+        ! Compute cell-centered velocity
+        call fs%interp_vel(Ui,Vi,Wi)
+        ! Compute divergence
+        call fs%get_div()
       end block initialize_velocity
-
-
-      ! Initialize IBM fields
-      initialize_ibm: block
-         integer :: i,j,k
-         do k=fs%cfg%kmino_,fs%cfg%kmaxo_
-            do j=fs%cfg%jmino_,fs%cfg%jmaxo_
-               do i=fs%cfg%imino_,fs%cfg%imaxo_
-                  G(i,j,k)=0.5_WP*D-sqrt(fs%cfg%ym(j)**2+fs%cfg%zm(k)**2)
-               end do
-            end do
-         end do
-      end block initialize_ibm
 
 
       ! Create an LES model
@@ -184,7 +138,7 @@ contains
          call param_read('Ensight output period',ens_evt%tper)
          ! Add variables to output
          call ens_out%add_vector('velocity',Ui,Vi,Wi)
-         call ens_out%add_scalar('levelset',G)
+         call ens_out%add_scalar('levelset',cfg%Gib)
          call ens_out%add_scalar('pressure',fs%P)
          call ens_out%add_scalar('visc_sgs',sgs%visc)
          ! Output to ensight
@@ -203,7 +157,7 @@ contains
          call mfile%add_column(time%t,'Time')
          call mfile%add_column(time%dt,'Timestep size')
          call mfile%add_column(time%cfl,'Maximum CFL')
-         call mfile%add_column(mfr,'MFR')
+         call mfile%add_column(meanU,'Bulk U')
          call mfile%add_column(bforce,'Body force')
          call mfile%add_column(fs%Umax,'Umax')
          call mfile%add_column(fs%Vmax,'Vmax')
@@ -248,11 +202,12 @@ contains
 
          ! Turbulence modeling
          sgs_modeling: block
-               use sgsmodel_class, only: vreman
-               resU=fs%rho
-               call fs%get_gradu(gradU)
-               call sgs%get_visc(type=vreman,dt=time%dtold,rho=resU,gradu=gradU)
-               fs%visc=visc+sgs%visc
+           use sgsmodel_class, only: vreman
+           resU=fs%rho
+           call fs%get_gradu(gradU)
+           call sgs%get_visc(type=vreman,dt=time%dtold,rho=resU,gradu=gradU)
+           where (cfg%Gib.lt.0.0_WP) sgs%visc=0.0_WP
+           fs%visc=visc+sgs%visc
          end block sgs_modeling
 
          ! Perform sub-iterations
@@ -272,26 +227,28 @@ contains
             resW=-2.0_WP*(fs%rho*fs%W-fs%rho*fs%Wold)+time%dt*resW
 
             ! Add body forcing
-            bodyforcing: block
-               real(WP) :: mfr
-               mfr=get_bodyforce_mfr(resU)
-               bforce=(mfr_target-mfr)/time%dt
-               resU=resU+time%dt*bforce
-            end block bodyforcing
-
-            ! Apply IB forcing to enforce BC at the pipe walls
-            !ibforcing: block
-            !   integer :: i,j,k
-            !   do k=fs%cfg%kmino_,fs%cfg%kmaxo_
-            !      do j=fs%cfg%jmino_,fs%cfg%jmaxo_
-            !         do i=fs%cfg%imino_,fs%cfg%imaxo_
-            !            resU(i,j,k)=resU(i,j,k)-(1.0_WP-get_VF(i,j,k,'U'))*fs%rho*fs%U(i,j,k)
-            !            resV(i,j,k)=resV(i,j,k)-(1.0_WP-get_VF(i,j,k,'V'))*fs%rho*fs%V(i,j,k)
-            !            resW(i,j,k)=resW(i,j,k)-(1.0_WP-get_VF(i,j,k,'W'))*fs%rho*fs%W(i,j,k)
-            !         end do
-            !      end do
-            !   end do
-            !end block ibforcing
+            forcing: block
+               use mpi_f08,  only: MPI_SUM,MPI_ALLREDUCE
+               use parallel, only: MPI_REAL_WP
+               integer :: i,j,k,ierr
+               real(WP) :: myU,myUvol,Uvol,VFx
+               myU=0.0_WP; myUvol=0.0_WP
+               do k=fs%cfg%kmin_,fs%cfg%kmax_
+                  do j=fs%cfg%jmin_,fs%cfg%jmax_
+                     do i=fs%cfg%imin_,fs%cfg%imax_
+                        VFx=sum(fs%itpr_x(:,i,j,k)*cfg%VF(i-1:i,j,k))
+                        if (VFx.le.0.5_WP) cycle
+                        myU   =myU   +fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*VFx*(2.0_WP*fs%U(i,j,k)-fs%Uold(i,j,k))
+                        myUvol=myUvol+fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*VFx
+                     end do
+                  end do
+               end do
+               call MPI_ALLREDUCE(myUvol,Uvol ,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr)
+               call MPI_ALLREDUCE(myU   ,meanU,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr); meanU=meanU/Uvol
+               print *, meanU,Ubulk
+               resU=resU+fs%rho*(Ubulk-meanU)
+               bforce=fs%rho*(Ubulk-meanU)/time%dt
+            end block forcing
 
             ! Form implicit residuals
             call fs%solve_implicit(time%dt,resU,resV,resW)
@@ -303,13 +260,17 @@ contains
 
             ! Apply IB forcing to enforce BC at the pipe walls
             ibforcing: block
-               integer :: i,j,k
+              integer :: i,j,k
+              real(WP) :: VFx,VFy,VFz
                do k=fs%cfg%kmin_,fs%cfg%kmax_
                   do j=fs%cfg%jmin_,fs%cfg%jmax_
                      do i=fs%cfg%imin_,fs%cfg%imax_
-                        fs%U(i,j,k)=get_VF(i,j,k,'U')*fs%U(i,j,k)
-                        fs%V(i,j,k)=get_VF(i,j,k,'V')*fs%V(i,j,k)
-                        fs%W(i,j,k)=get_VF(i,j,k,'W')*fs%W(i,j,k)
+                        VFx=sum(fs%itpr_x(:,i,j,k)*cfg%VF(i-1:i,j,k))
+                        VFy=sum(fs%itpr_y(:,i,j,k)*cfg%VF(i,j-1:j,k))
+                        VFz=sum(fs%itpr_z(:,i,j,k)*cfg%VF(i,j,k-1:k))
+                        fs%U(i,j,k)=VFx*fs%U(i,j,k)
+                        fs%V(i,j,k)=VFy*fs%V(i,j,k)
+                        fs%W(i,j,k)=VFz*fs%W(i,j,k)
                      end do
                   end do
                end do
