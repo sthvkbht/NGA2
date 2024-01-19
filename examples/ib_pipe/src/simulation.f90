@@ -245,7 +245,6 @@ module simulation
                end do
                call MPI_ALLREDUCE(myUvol,Uvol ,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr)
                call MPI_ALLREDUCE(myU   ,meanU,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr); meanU=meanU/Uvol
-               print *, meanU,Ubulk
                resU=resU+fs%rho*(Ubulk-meanU)
                bforce=fs%rho*(Ubulk-meanU)/time%dt
             end block forcing
