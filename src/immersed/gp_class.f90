@@ -11,7 +11,7 @@ module gp_class
 
   ! List of known available bcond types for this solver
   integer, parameter, public :: dirichlet=1         !< Dirichlet condition
-  integer, parameter, public :: neumann=2           !< Zero normal gradient
+  integer, parameter, public :: neumann=2           !< Normal gradient
 
   !> Basic image point definition
   type :: image
