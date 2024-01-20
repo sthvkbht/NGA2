@@ -410,7 +410,7 @@ contains
     create_gp: block
       gp=gpibm(cfg=cfg,no=2)
       call gp%update()
-      ghost=real(gp%info,WP)
+      ghost=real(gp%label,WP)
     end block create_gp
 
 

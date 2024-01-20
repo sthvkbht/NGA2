@@ -2,7 +2,6 @@
 !> Provides support for Neumann boundary conditions with IBM
 module gp_class
   use precision,      only: WP
-  use string,         only: str_medium
   use ibconfig_class, only: ibconfig
   implicit none
   private
@@ -33,17 +32,17 @@ module gp_class
   type :: gpibm
 
      ! This is our config
-     class(ibconfig), pointer :: cfg                           !< This is the config the model is build for
+     class(ibconfig), pointer :: cfg                     !< This is the config the model is build for
 
      ! These are the ghost points
-     integer :: no                                             !< Number of overlapping ghost points
-     integer :: ngp                                            !< Number of ghost points for our solver
-     type(ghost), dimension(:), allocatable :: gp              !< Array of ghost points
-     integer, dimension(:,:,:), allocatable :: info            !< Integer array used for identifying ghost/image points
+     integer :: no                                       !< Number of overlapping ghost points
+     integer :: ngp                                      !< Number of ghost points for our solver
+     type(ghost), dimension(:), allocatable :: gp        !< Array of ghost points
+     integer, dimension(:,:,:), allocatable :: label     !< Integer array used for labeling ghost/image points
 
    contains
 
-     procedure :: update                                       !< Update ghost point information
+     procedure :: update                                 !< Update ghost point information
 
   end type gpibm
 
@@ -72,8 +71,8 @@ contains
     self%ngp=0
     if (allocated(self%gp)) deallocate(self%gp)
 
-    ! Allocate info array (0=fluid cell, 1=ghost point, 2=image point)
-    allocate(self%info(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%info=0
+    ! Allocate label array (0=fluid cell, 1=ghost point, 2=image point)
+    allocate(self%label(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%label=0
 
   end function constructor
 
@@ -216,13 +215,13 @@ contains
        end do
     end do
 
-    ! Update info array
-    this%info=0
+    ! Update label array
+    this%label=0
     do n=1,this%ngp
        i=this%gp(n)%ind(1); j=this%gp(n)%ind(2); k=this%gp(n)%ind(3)
-       this%info(i,j,k)=1 !< Ghost point
+       this%label(i,j,k)=1 !< Ghost point
        i=this%gp(n)%im%ind(1); j=this%gp(n)%im%ind(2); k=this%gp(n)%im%ind(3)
-       this%info(i,j,k)=2 !< Image points
+       this%label(i,j,k)=2 !< Image points
     end do
 
     ! Log/screen output
