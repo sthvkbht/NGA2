@@ -9,6 +9,10 @@ module gp_class
   ! Expose type/constructor/methods
   public :: gpibm
 
+  ! List of known available bcond types for this solver
+  integer, parameter, public :: dirichlet=1         !< Dirichlet condition
+  integer, parameter, public :: neumann=2           !< Zero normal gradient
+
   !> Basic image point definition
   type :: image
      integer :: i1                                       !< First index for interpolation in x
@@ -24,7 +28,7 @@ module gp_class
 
   !> Basic ghost point definition
   type :: ghost
-     integer , dimension(3) :: ind                       !< Index of cell containing image point
+     integer, dimension(3) :: ind                        !< Index of cell containing image point
      type(image) :: im                                   !< Associated image point
   end type ghost
 
@@ -43,6 +47,7 @@ module gp_class
    contains
 
      procedure :: update                                 !< Update ghost point information
+     procedure :: apply_bcond                            !< Apply specified boundary conditions
 
   end type gpibm
 
@@ -202,7 +207,7 @@ contains
                    ! Store image point data
                    this%gp(n)%im%pos=pos_im
                    this%gp(n)%im%ind(1)=i1; this%gp(n)%im%ind(2)=j1; this%gp(n)%im%ind(3)=k1
-                   this%gp(n)%im%ind=this%cfg%get_ijk_global( this%gp(n)%im%pos,this%gp(n)%im%ind)
+                   this%gp(n)%im%ind=this%cfg%get_ijk_global(this%gp(n)%im%pos,this%gp(n)%im%ind)
                    this%gp(n)%im%i1=i1; this%gp(n)%im%i2=i2
                    this%gp(n)%im%j1=j1; this%gp(n)%im%j2=j2
                    this%gp(n)%im%k1=k1; this%gp(n)%im%k2=k2
@@ -239,6 +244,37 @@ contains
     end block logging
 
   end subroutine update
+
+
+  !> Enforce boundary condition at ghost points of A using boundary point BP
+  subroutine apply_bcond(this,type,BP,A)
+    use messager,       only: die
+    implicit none
+    class(gpibm), intent(inout) :: this
+    integer, intent(in) :: type
+    real(WP), intent(in) :: BP
+    real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: A !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+    integer :: i,j,k,n
+    real(WP) :: IP,dist
+    select case (type)
+    case (dirichlet)
+       do n=1,this%ngp
+          i=this%gp(n)%ind(1); j=this%gp(n)%ind(2); k=this%gp(n)%ind(3)
+          IP=sum(this%gp(n)%im%interp*A(this%gp(n)%im%i1:this%gp(n)%im%i2,this%gp(n)%im%j1:this%gp(n)%im%j2,this%gp(n)%im%k1:this%gp(n)%im%k2))
+          A(i,j,k)=2.0_WP*BP-IP
+       end do
+    case (neumann)
+       do n=1,this%ngp
+          i=this%gp(n)%ind(1); j=this%gp(n)%ind(2); k=this%gp(n)%ind(3)
+          IP=sum(this%gp(n)%im%interp*A(this%gp(n)%im%i1:this%gp(n)%im%i2,this%gp(n)%im%j1:this%gp(n)%im%j2,this%gp(n)%im%k1:this%gp(n)%im%k2))
+          dist=abs(this%cfg%Gib(i,j,k))
+          A(i,j,k)=IP-2.0_WP*dist*BP
+       end do
+    case default
+       call die('[gpibm apply_bcond] Unknown bcond type')
+    end select
+    call this%cfg%sync(A)
+  end subroutine apply_bcond
 
 
 end module gp_class

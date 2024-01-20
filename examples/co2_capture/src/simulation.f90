@@ -566,17 +566,9 @@ contains
 
              ! Apply IB forcing to enforce Neumann at the pipe walls
              ibforcing_sc: block
-               integer :: i,j,k,n
-               real(WP) :: sc_
-               ! Loop through ghost points and get value at image points
+               use gp_class, only: neumann
                where (cfg%Gib.lt.0.0_WP) sc(ii)%sc=SC0(ii)
-               do n=1,gp%ngp
-                  i=gp%gp(n)%ind(1); j=gp%gp(n)%ind(2); k=gp%gp(n)%ind(3)
-                  sc_=sum(gp%gp(n)%im%interp*sc(ii)%sc(gp%gp(n)%im%i1:gp%gp(n)%im%i2,gp%gp(n)%im%j1:gp%gp(n)%im%j2,gp%gp(n)%im%k1:gp%gp(n)%im%k2))
-                  ! Apply Neumann condition
-                  sc(ii)%sc(i,j,k)=sc_
-               end do
-               call sc(ii)%cfg%sync(sc(ii)%sc)
+               call gp%apply_bcond(type=neumann,BP=0.0_WP,A=sc(ii)%sc)
              end block ibforcing_sc
 
              ! Apply other boundary conditions on the resulting field
