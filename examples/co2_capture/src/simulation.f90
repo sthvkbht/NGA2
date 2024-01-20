@@ -567,11 +567,7 @@ contains
              ! Apply IB forcing to enforce Neumann at the pipe walls
              ibforcing_sc: block
                integer :: i,j,k,n
-               integer :: i1,i2,j1,j2,k1,k2
-               real(WP) :: dist,sc_,buf
-               real(WP), dimension(3) :: pos,pos_h
-               real(WP), dimension(2,2,2) :: alpha3D,delta3D,dist3D,eta3D
-               real(WP), parameter :: eps=1.0e-10_WP
+               real(WP) :: sc_
                ! Loop through ghost points and get value at image points
                where (cfg%Gib.lt.0.0_WP) sc(ii)%sc=SC0(ii)
                do n=1,gp%ngp
