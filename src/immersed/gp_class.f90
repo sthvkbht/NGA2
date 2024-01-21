@@ -15,15 +15,10 @@ module gp_class
 
   !> Basic image point definition
   type :: image
-     integer :: i1                                       !< First index for interpolation in x
-     integer :: i2                                       !< Second index for interpolation in x
-     integer :: j1                                       !< First index for interpolation in y
-     integer :: j2                                       !< Second index for interpolation in y
-     integer :: k1                                       !< First index for interpolationin z
-     integer :: k2                                       !< Second index for interpolation in z
+     integer, dimension(3,2) :: st_sc                    !< Interpolation stencil extent for scalars
      integer , dimension(3) :: ind                       !< Index of cell containing image point
      real(WP), dimension(3) :: pos                       !< Coordinates of image point
-     real(WP), dimension(2,2,2) :: interp                !< Interpolation weights
+     real(WP), dimension(2,2,2) :: itp_sc                !< Interpolation weights for scalars
   end type image
 
   !> Basic ghost point definition
@@ -208,10 +203,10 @@ contains
                    this%gp(n)%im%pos=pos_im
                    this%gp(n)%im%ind(1)=i1; this%gp(n)%im%ind(2)=j1; this%gp(n)%im%ind(3)=k1
                    this%gp(n)%im%ind=this%cfg%get_ijk_global(this%gp(n)%im%pos,this%gp(n)%im%ind)
-                   this%gp(n)%im%i1=i1; this%gp(n)%im%i2=i2
-                   this%gp(n)%im%j1=j1; this%gp(n)%im%j2=j2
-                   this%gp(n)%im%k1=k1; this%gp(n)%im%k2=k2
-                   this%gp(n)%im%interp=delta3D
+                   this%gp(n)%im%st_sc(1,1)=i1; this%gp(n)%im%st_sc(1,2)=i2
+                   this%gp(n)%im%st_sc(2,1)=j1; this%gp(n)%im%st_sc(2,2)=j2
+                   this%gp(n)%im%st_sc(3,1)=k1; this%gp(n)%im%st_sc(3,2)=k2
+                   this%gp(n)%im%itp_sc=delta3D
                 else
                    call die('[gpibm update] Problem computing interpolation weight for image point')
                 end if
@@ -260,13 +255,13 @@ contains
     case (dirichlet)
        do n=1,this%ngp
           i=this%gp(n)%ind(1); j=this%gp(n)%ind(2); k=this%gp(n)%ind(3)
-          IP=sum(this%gp(n)%im%interp*A(this%gp(n)%im%i1:this%gp(n)%im%i2,this%gp(n)%im%j1:this%gp(n)%im%j2,this%gp(n)%im%k1:this%gp(n)%im%k2))
+          IP=sum(this%gp(n)%im%itp_sc*A(this%gp(n)%im%st_sc(1,1:2),this%gp(n)%im%st_sc(2,1:2),this%gp(n)%im%st_sc(3,1:2)))
           A(i,j,k)=2.0_WP*BP-IP
        end do
     case (neumann)
        do n=1,this%ngp
           i=this%gp(n)%ind(1); j=this%gp(n)%ind(2); k=this%gp(n)%ind(3)
-          IP=sum(this%gp(n)%im%interp*A(this%gp(n)%im%i1:this%gp(n)%im%i2,this%gp(n)%im%j1:this%gp(n)%im%j2,this%gp(n)%im%k1:this%gp(n)%im%k2))
+          IP=sum(this%gp(n)%im%itp_sc*A(this%gp(n)%im%st_sc(1,1:2),this%gp(n)%im%st_sc(2,1:2),this%gp(n)%im%st_sc(3,1:2)))
           dist=abs(this%cfg%Gib(i,j,k))
           A(i,j,k)=IP-2.0_WP*dist*BP
        end do
