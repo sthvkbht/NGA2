@@ -134,7 +134,7 @@ contains
          call param_read('Dynamic viscosity',visc); fs%visc=visc
          ! Assign constant density
          call param_read('Density',fs%rho)
-        ! Configure pressure solver
+         ! Configure pressure solver
          ps=fft2d(cfg=cfg,name='Pressure',nst=7)
          ! Configure implicit velocity solver
          vs=ddadi(cfg=cfg,name='Velocity',nst=7)
@@ -156,14 +156,6 @@ contains
                do i=fs%cfg%imino_,fs%cfg%imaxo_
                   if (fs%umask(i,j,k).eq.0) fs%U(i,j,k)=fs%U(i,j,k)+amp*vel*cos(8.0_WP*twoPi*fs%cfg%zm(k)/fs%cfg%zL)
                   if (fs%wmask(i,j,k).eq.0) fs%W(i,j,k)=fs%W(i,j,k)+amp*vel*cos(8.0_WP*twoPi*fs%cfg%xm(i)/fs%cfg%xL)
-               end do
-            end do
-         end do
-         do k=fs%cfg%kmino_,fs%cfg%kmaxo_
-            do j=fs%cfg%jmino_,fs%cfg%jmaxo_
-               do i=fs%cfg%imino_,fs%cfg%imaxo_
-                  if (fs%umask(i,j,k).eq.0) fs%U(i,j,k)=fs%U(i,j,k)+random_uniform(lo=-0.5_WP*amp,hi=0.5_WP*amp)*fs%U(i,j,k)
-                  if (fs%wmask(i,j,k).eq.0) fs%W(i,j,k)=fs%W(i,j,k)+random_uniform(lo=-0.5_WP*amp,hi=0.5_WP*amp)*fs%W(i,j,k)
                end do
             end do
          end do
