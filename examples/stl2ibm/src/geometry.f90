@@ -73,27 +73,6 @@ contains
            t(i)%norm=normalize(t(i)%norm*scaling)
         end do
         ! Get extents
-        xmax=-huge(1.0_WP);ymax=-huge(1.0_WP);zmax=-huge(1.0_WP)
-        do i=1,nt
-           if (t(i)%v1(1).lt.xmin) xmin=t(i)%v1(1)
-           if (t(i)%v2(1).lt.xmin) xmin=t(i)%v2(1)
-           if (t(i)%v3(1).lt.xmin) xmin=t(i)%v3(1)
-           if (t(i)%v1(2).lt.ymin) ymin=t(i)%v1(2)
-           if (t(i)%v2(2).lt.ymin) ymin=t(i)%v2(2)
-           if (t(i)%v3(2).lt.ymin) ymin=t(i)%v3(2)
-           if (t(i)%v1(3).lt.zmin) zmin=t(i)%v1(3)
-           if (t(i)%v2(3).lt.zmin) zmin=t(i)%v2(3)
-           if (t(i)%v3(3).lt.zmin) zmin=t(i)%v3(3)
-           if (t(i)%v1(1).gt.xmax) xmax=t(i)%v1(1)
-           if (t(i)%v2(1).gt.xmax) xmax=t(i)%v2(1)
-           if (t(i)%v3(1).gt.xmax) xmax=t(i)%v3(1)
-           if (t(i)%v1(2).gt.ymax) ymax=t(i)%v1(2)
-           if (t(i)%v2(2).gt.ymax) ymax=t(i)%v2(2)
-           if (t(i)%v3(2).gt.ymax) ymax=t(i)%v3(2)
-           if (t(i)%v1(3).gt.zmax) zmax=t(i)%v1(3)
-           if (t(i)%v2(3).gt.zmax) zmax=t(i)%v2(3)
-           if (t(i)%v3(3).gt.zmax) zmax=t(i)%v3(3)
-        end do
         xmin=minval(t(:)%v1(1)); xmin=min(xmin,minval(t(:)%v2(1))); xmin=min(xmin,minval(t(:)%v3(1)))
         xmax=maxval(t(:)%v1(1)); xmax=max(xmin,maxval(t(:)%v2(1))); xmax=max(xmax,maxval(t(:)%v3(1)))
         ymin=minval(t(:)%v1(2)); ymin=min(ymin,minval(t(:)%v2(2))); ymin=min(ymin,minval(t(:)%v3(2)))
