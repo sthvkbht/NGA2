@@ -135,11 +135,11 @@ contains
          real(WP), parameter :: eps=1.0e-9_WP
          ! Create IB field
          prog=0
-         togo=cfg%nx_*cfg%ny_*cfg%nz_
+         togo=cfg%nxo_*cfg%nyo_*cfg%nzo_
          iratio_old=-1
-         do k=cfg%kmin_,cfg%kmax_
-            do j=cfg%jmin_,cfg%jmax_
-               do i=cfg%imin_,cfg%imax_
+         do k=cfg%kmino_,cfg%kmaxo_
+            do j=cfg%jmino_,cfg%jmaxo_
+               do i=cfg%imino_,cfg%imaxo_
                   ! Prepare projections
                   count=0
                   mydist=huge(1.0_WP)
@@ -195,7 +195,6 @@ contains
                end do
             end do
          end do
-         call cfg%sync(cfg%Gib)
          ! Get normal vector
          call cfg%calculate_normal()
          ! Get VF field
