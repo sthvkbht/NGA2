@@ -5,9 +5,9 @@ Partition :	4 1 1
 STL file : vts.stl
 
 # Mesh definition
-nx :	64
-ny :	64
-nz :	64
+nx :	32
+ny :	32
+nz :	32
 
 # Case definition
 Inlet velocity :  1
