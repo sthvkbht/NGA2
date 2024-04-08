@@ -38,7 +38,7 @@ contains
             x(i)=real(i-1,WP)/real(nx,WP)*Lx
          end do
          do j=1,ny-1
-            y(j+2)=real(j-1,WP)/real(ny,WP)*Ly
+            y(j+2)=real(j-1,WP)/real(ny-2,WP)*Ly
          end do
          ! Add 2 cells below for the IB
          dy=y(4)-y(3)
@@ -75,7 +75,6 @@ contains
            print *, 'Lx must be > 4x hill height!'
            stop
         end if
-        dy_min=cfg%y(2)-cfg%y(1)
         cfg%VF=1.0_WP
         do k=cfg%kmino_,cfg%kmaxo_
            do j=cfg%jmino_,cfg%jmaxo_
@@ -86,19 +85,19 @@ contains
                     dist = abs(cfg%xm(i)*h_crest/H-h_sep)
                  end if
                  if (dist.le.9.0_WP) then
-                    cfg%Gib(i,j,k) = cfg%ym(j)-dy_min - H/h_crest*min(h_crest, h_crest+6.77507096985e-3_WP*dist**2-2.1245277758e-3_WP*dist**3)
+                    cfg%Gib(i,j,k) = cfg%ym(j) - H/h_crest*min(h_crest, h_crest+6.77507096985e-3_WP*dist**2-2.1245277758e-3_WP*dist**3)
                  else if (dist.gt.9.0_WP .and. dist.le.14.0_WP) then
-                    cfg%Gib(i,j,k) =  cfg%ym(j) -dy_min-H/h_crest*(25.07355893131_WP+9.754803562315E-01_WP*dist-1.016116352781E-01_WP*dist**2+1.889794677828E-03_WP*dist**3)
+                    cfg%Gib(i,j,k) =  cfg%ym(j)-H/h_crest*(25.07355893131_WP+9.754803562315E-01_WP*dist-1.016116352781E-01_WP*dist**2+1.889794677828E-03_WP*dist**3)
                  else if (dist.gt.14.0_WP .and. dist.le.20.0_WP) then 
-                    cfg%Gib(i,j,k) = cfg%ym(j) -dy_min- H/h_crest*(2.579601052357E+01_WP+8.206693007457E-01_WP*dist -9.055370274339E-02_WP*dist**2+1.626510569859E-03_WP*dist**3)  
+                    cfg%Gib(i,j,k) = cfg%ym(j)- H/h_crest*(2.579601052357E+01_WP+8.206693007457E-01_WP*dist -9.055370274339E-02_WP*dist**2+1.626510569859E-03_WP*dist**3)  
                  else if (dist.gt.20.0_WP .and. dist.le.30.0_WP) then
-                    cfg%Gib(i,j,k) = cfg%ym(j) -dy_min- H/h_crest*(4.046435022819E+01_WP-1.379581654948E+00_WP*dist +1.945884504128E-02_WP*dist**2-2.070318932190E-04_WP*dist**3)
+                    cfg%Gib(i,j,k) = cfg%ym(j)- H/h_crest*(4.046435022819E+01_WP-1.379581654948E+00_WP*dist +1.945884504128E-02_WP*dist**2-2.070318932190E-04_WP*dist**3)
                  else if (dist.gt.30.0_WP .and. dist.le.40.0_WP) then
-                    cfg%Gib(i,j,k) = cfg%ym(j) -dy_min- H/h_crest*( 1.792461334664E+01_WP+8.743920332081E-01_WP*dist-5.567361123058E-02_WP*dist**2+6.277731764683E-04_WP*dist**3 )           
+                    cfg%Gib(i,j,k) = cfg%ym(j)- H/h_crest*( 1.792461334664E+01_WP+8.743920332081E-01_WP*dist-5.567361123058E-02_WP*dist**2+6.277731764683E-04_WP*dist**3 )           
                  else if (dist.gt.40.0_WP .and. dist.le.54.0_WP) then 
-                    cfg%Gib(i,j,k) = cfg%ym(j) -dy_min- H/h_crest*max(0.,5.639011190988E+01_WP-2.010520359035E+00_WP*dist+1.644919857549E-02_WP*dist**2+2.674976141766E-05_WP*dist**3)
+                    cfg%Gib(i,j,k) = cfg%ym(j)- H/h_crest*max(0.,5.639011190988E+01_WP-2.010520359035E+00_WP*dist+1.644919857549E-02_WP*dist**2+2.674976141766E-05_WP*dist**3)
                  else 
-                    cfg%Gib(i,j,k) = cfg%ym(j)-dy_min
+                    cfg%Gib(i,j,k) = cfg%ym(j)
                  end if
               end do
            end do

@@ -39,7 +39,7 @@ module simulation
    real(WP) :: visc
 
    !> Channel forcing
-   real(WP) :: Ubulk,Wbulk
+   real(WP) :: Ubulk
    real(WP) :: meanU,meanW
 
  contains
@@ -79,8 +79,10 @@ module simulation
       create_and_initialize_flow_solver: block
          use mathtools, only: twoPi
          use random,    only: random_uniform
-         integer :: i,j,k
-         real(WP) :: amp,vel
+         use mpi_f08,  only: MPI_SUM,MPI_MAX,MPI_ALLREDUCE
+         use parallel, only: MPI_REAL_WP
+         integer :: i,j,k,ierr
+         real(WP) :: amp,vel,geo_fac,my_Ly,Ly
          ! Create flow solver
          fs=incomp(cfg=cfg,name='NS solver')
          ! Assign constant viscosity
@@ -94,16 +96,27 @@ module simulation
          ! Setup the solver
          call fs%setup(pressure_solver=ps,implicit_solver=vs)
          ! Initialize velocity based on specified bulk
-         call param_read('Ubulk',Ubulk)
-         call param_read('Wbulk',Wbulk)
+         call param_read('Uh',Ubulk)
+         ! Rescale bulk velocity to enforce correct mean velocity at x=0
+         my_Ly=0.0_WP
+         i=fs%cfg%imin; k=fs%cfg%kmin
+         if (fs%cfg%imin_.le.i.and.fs%cfg%imax_.ge.i.and.&
+              fs%cfg%kmin_.le.k.and.fs%cfg%kmax_.ge.k) then
+            do j=fs%cfg%jmin_,fs%cfg%jmax_
+               my_Ly=my_Ly+fs%cfg%dy(j)*fs%cfg%VF(i,j,k)
+            end do
+         end if
+         call MPI_ALLREDUCE(my_Ly,Ly,1,MPI_REAL_WP,MPI_SUM,fs%cfg%ycomm,ierr)
+         call MPI_ALLREDUCE(Ly,my_Ly,1,MPI_REAL_WP,MPI_MAX,fs%cfg%comm,ierr); Ly=my_Ly
+         geo_fac=Ly*fs%cfg%xL*fs%cfg%zL/fs%cfg%fluid_vol
+         Ubulk=Ubulk*geo_fac
          fs%U=0.0_WP; fs%V=0.0_WP; fs%W=0.0_WP
          where (fs%umask.eq.0) fs%U=Ubulk
-         where (fs%wmask.eq.0) fs%W=Wbulk
          meanU=Ubulk
-         meanW=Wbulk
+         meanW=0.0_WP
          ! To facilitate transition
          call param_read('Perturbation',amp)
-         vel=sqrt(Ubulk**2+Wbulk**2)
+         vel=sqrt(Ubulk**2)
          do k=fs%cfg%kmino_,fs%cfg%kmaxo_
             do j=fs%cfg%jmino_,fs%cfg%jmaxo_
                do i=fs%cfg%imino_,fs%cfg%imaxo_
@@ -266,7 +279,7 @@ module simulation
                where (fs%umask.eq.0) resU=resU+fs%rho*(Ubulk-meanU)
                call MPI_ALLREDUCE(myWvol,Wvol ,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr)
                call MPI_ALLREDUCE(myW   ,meanW,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr); meanW=meanW/Wvol
-               where (fs%wmask.eq.0) resW=resW+fs%rho*(Wbulk-meanW)
+               where (fs%wmask.eq.0) resW=resW-fs%rho*meanW
             end block forcing
 
             ! Form implicit residuals
