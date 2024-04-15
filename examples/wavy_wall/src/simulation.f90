@@ -266,6 +266,7 @@ module simulation
                   do j=fs%cfg%jmin_,fs%cfg%jmax_
                      do i=fs%cfg%imin_,fs%cfg%imax_
                         VFx=sum(fs%itpr_x(:,i,j,k)*cfg%VF(i-1:i,j,k))
+                        if (VFx.le.0.5_WP) cycle
                         myU   =myU   +fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*VFx*(2.0_WP*fs%U(i,j,k)-fs%Uold(i,j,k))
                         myUvol=myUvol+fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*VFx
                         VFz=sum(fs%itpr_z(:,i,j,k)*cfg%VF(i,j,k-1:k))
