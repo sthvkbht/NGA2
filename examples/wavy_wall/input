@@ -14,8 +14,7 @@ Hill height : 0.05
 # Fluid properties and velocity
 Dynamic viscosity :   8.53e-4
 Density :             996.57
-Ubulk : 4.79e-2
-Wbulk : 0
+Uh : 4.79e-2
 Perturbation : 0.1
 
 # Time integration
