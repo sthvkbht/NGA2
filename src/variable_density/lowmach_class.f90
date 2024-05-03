@@ -1895,7 +1895,7 @@ contains
       type(bcond), pointer :: my_bc
       
       ! Evaluate MFR mismatch and velocity correction
-      call this%cfg%integrate(A=drhodt,integral=dMdt)
+      call this%cfg%integrate_without_vf(A=drhodt,integral=dMdt)
       call this%get_mfr()
       mfr_error=sum(this%mfr)+dMdt
       if (abs(mfr_error).lt.10.0_WP*epsilon(1.0_WP).or.abs(this%correctable_area).lt.10.0_WP*epsilon(1.0_WP)) return

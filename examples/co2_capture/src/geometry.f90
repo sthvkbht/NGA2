@@ -82,13 +82,38 @@ contains
       
       ! Create IB walls for this config
       create_walls: block
-         use ibconfig_class, only: bigot,sharp,stair
+         use ibconfig_class, only: bigot,sharp
          integer :: i,j,k
+         real(WP) :: x0,R,dist
+         call param_read('x0',x0)
          ! Create IB field
          do k=cfg%kmino_,cfg%kmaxo_
             do j=cfg%jmino_,cfg%jmaxo_
                do i=cfg%imino_,cfg%imaxo_
-                  cfg%Gib(i,j,k)=0.5_WP*D-sqrt(cfg%ym(j)**2+cfg%zm(k)**2)
+                  R=sqrt(cfg%ym(j)**2+cfg%zm(k)**2)
+                  if (R.ge.0.5_WP*D.and.cfg%xm(i).le.x0) then
+                     cfg%Gib(i,j,k)=x0-cfg%xm(i)
+                  elseif (R.ge.0.5_WP*D.and.cfg%xm(i).gt.x0.and.cfg%xm(i).lt.cfg%xL-x0) then
+                     cfg%Gib(i,j,k)=-min(cfg%xm(i)-x0,R-0.5_WP*D)
+                  elseif (R.lt.0.5_WP*D.and.cfg%xm(i).le.x0) then
+                     cfg%Gib(i,j,k)=sqrt((cfg%xm(i)-x0)**2)+0.5_WP*D-R
+                  elseif (R.ge.0.5_WP*D.and.cfg%xm(i).ge.cfg%xL-x0) then
+                     cfg%Gib(i,j,k)=cfg%xm(i)-(cfg%xL-x0)
+                  elseif (R.lt.0.5_WP*D.and.cfg%xm(i).ge.cfg%xL-x0) then
+                     cfg%Gib(i,j,k)=-min(cfg%xm(i)-(cfg%xL-x0),R-0.5_WP*D)
+                  else
+                     cfg%Gib(i,j,k)=0.5_WP*D-R
+                  end if
+                  
+                  !if (cfg%xm(i).lt.x0) then
+                  !   if (R.ge.0.5_WP*D) then
+                  !      cfg%Gib(i,j,k)=x0-cfg%xm(i)
+                  !   else
+                  !      cfg%Gib(i,j,k)=sqrt((cfg%xm(i)-x0)**2)
+                  !   end if
+                  !else
+                  !   cfg%Gib(i,j,k)=0.5_WP*D-R
+                  !end if
                end do
             end do
          end do

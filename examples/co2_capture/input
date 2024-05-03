@@ -4,6 +4,7 @@ Partition :	4 1 1
 # Mesh definition
 Pipe diameter : 0.0064
 Pipe length   : 0.0384
+x0 : 0.00192
 nx : 192
 ny : 32
 nz : 32
@@ -21,13 +22,9 @@ Initial T: 300
 Initial CO2 : 0
 Inlet T : 300
 Inlet CO2 : 0.1
-Min T : 250
-Max T : 400
-Min CO2 : -.1
-Max CO2 : 1.1
 
 # Particle parameters
-Particle volume fraction : 0.3
+Particle volume fraction : 0.1
 Particle diameter : 200e-6
 Particle density :  861.4
 Particle temperature : 300
@@ -37,7 +34,6 @@ Filter width : 600e-6
 # Time integration
 Max timestep size :	1e-4
 Max cfl number:		0.9
-Max time : 		1000
 
 # Ensight output
-Ensight output period : 10e-4
+Ensight output period : 20e-4

@@ -42,13 +42,13 @@ module simulation
   real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi,rhof
   real(WP), dimension(:,:,:), allocatable :: srcUlp,srcVlp,srcWlp,ghost
   real(WP), dimension(:,:,:,:), allocatable :: srcSClp
-  real(WP) :: visc,diffusivity,rhoUin
+  real(WP) :: visc,Uin
 
   !> Scalar indices
   integer, parameter :: ind_T  =1
   integer, parameter :: ind_CO2=2
   integer :: nscalar=2
-  real(WP), dimension(2) :: SC0,SCin,SCmin,SCmax
+  real(WP), dimension(2) :: SC0,SCin,diff
 
   !> Thermo-chemistry parameters
   real(WP), parameter :: Rcst=8.314_WP         !< J/(mol.K)
@@ -57,16 +57,18 @@ module simulation
   real(WP), parameter :: W_H2O = 18.0153e-3_WP !< kg/mol
   real(WP) :: Pthermo,fCp
 
+  !> Integral of pressure residual
+  real(WP) :: int_RP=0.0_WP
+
   ! Ghost point IBM
   integer :: gp_no
-  integer, dimension(:,:),allocatable :: gp_map
 
 contains
 
 
   !> Define here our equation of state - rho(P,T,Yk)
   !> This just updates sc%rho
-  subroutine get_sc_rho()
+  subroutine get_rho()
     real(WP) :: T,Y_CO2,Y_N2,Wmix
     integer :: i,j,k
     do k=fs%cfg%kmino_,fs%cfg%kmaxo_
@@ -84,10 +86,10 @@ contains
     do i=2,nscalar
        sc(i)%rho=sc(1)%rho
     end do
-  end subroutine get_sc_rho
+  end subroutine get_rho
 
   !> Compute viscosity based on Sutherland's law
-  subroutine get_viscosity
+  subroutine get_viscosity()
     real(WP) :: T
     real(WP), parameter :: Tref=273.11_WP
     real(WP), parameter :: Sref=110.56_WP
@@ -103,8 +105,8 @@ contains
   end subroutine get_viscosity
 
 
-  !> Compute thermal diffusivity based on Sutherland's law
-  subroutine get_thermal_diffusivity
+  !> Compute diffusivity based on Sutherland's law
+  subroutine get_diffusivity()
     real(WP) :: T
     real(WP), parameter :: Tref=273.11_WP
     real(WP), parameter :: Sref=110.56_WP
@@ -113,23 +115,13 @@ contains
        do j=fs%cfg%jmino_,fs%cfg%jmaxo_
           do i=fs%cfg%imino_,fs%cfg%imaxo_
              T=sc(ind_T)%SC(i,j,k)
-             sc(ind_T)%diff(i,j,k)=diffusivity*(T/Tref)**1.5_WP*(Tref+Sref)/(T+Sref)
+             sc(ind_T)%diff(i,j,k)=diff(ind_T)*(T/Tref)**1.5_WP*(Tref+Sref)/(T+Sref)
+             sc(ind_CO2)%diff(i,j,k)=diff(ind_CO2)*(T/Tref)**1.5_WP*(Tref+Sref)/(T+Sref)
           end do
        end do
     end do
-  end subroutine get_thermal_diffusivity
-
-
-  !> Function that localizes the left (x-) of the domain
-  function left_of_domain(pg,i,j,k) result(isIn)
-    use pgrid_class, only: pgrid
-    implicit none
-    class(pgrid), intent(in) :: pg
-    integer, intent(in) :: i,j,k
-    logical :: isIn
-    isIn=.false.
-    if (i.eq.pg%imin.and.j.ge.pg%jmin.and.j.le.pg%jmax.and.k.ge.pg%kmin.and.k.le.pg%kmax) isIn=.true.
-  end function left_of_domain
+  end subroutine get_diffusivity
+  
 
   !> Function that localizes the right (x+) of the domain
   function right_of_domain(pg,i,j,k) result(isIn)
@@ -143,6 +135,18 @@ contains
   end function right_of_domain
 
 
+  !> Function that localizes the left (x-) of the domain
+  function left_of_domain(pg,i,j,k) result(isIn)
+    use pgrid_class, only: pgrid
+    implicit none
+    class(pgrid), intent(in) :: pg
+    integer, intent(in) :: i,j,k
+    logical :: isIn
+    isIn=.false.
+    if (i.eq.pg%imin) isIn=.true.
+  end function left_of_domain
+
+
   !> Function that localizes the left (x-) of the domain for scalars
   function left_of_domain_sc(pg,i,j,k) result(isIn)
     use pgrid_class, only: pgrid
@@ -152,9 +156,7 @@ contains
     real(WP) :: radius
     logical :: isIn
     isIn=.false.
-    !if (i.eq.pg%imin-1) isIn=.true.
-    radius=norm2([pg%ym(j),pg%zm(k)]-[0.0_WP,0.0_WP])
-    if (radius.le.0.5_WP*D.and.i.eq.pg%imin) isIn=.true.
+    if (i.eq.pg%imin-1) isIn=.true.
   end function left_of_domain_sc
 
 
@@ -167,7 +169,6 @@ contains
     initialize_timetracker: block
       time=timetracker(amRoot=cfg%amRoot)
       call param_read('Max timestep size',time%dtmax)
-      call param_read('Max time',time%tmax)
       call param_read('Max cfl number',time%cflmax)
       time%dt=time%dtmax
       time%itmax=2
@@ -202,10 +203,10 @@ contains
       sc(ind_T)  =vdscalar(cfg=cfg,scheme=quick,name='T')
       sc(ind_CO2)=vdscalar(cfg=cfg,scheme=quick,name='CO2')
       ! Assign constant diffusivity
-      call param_read('Thermal diffusivity',diffusivity)
-      sc(ind_T)%diff=diffusivity
-      call param_read('CO2 diffusivity',diffusivity)
-      sc(ind_CO2)%diff=diffusivity
+      call param_read('Thermal diffusivity',diff(ind_T))
+      sc(ind_T)%diff=diff(ind_T)
+      call param_read('CO2 diffusivity',diff(ind_CO2))
+      sc(ind_CO2)%diff=diff(ind_CO2)
       ! Configure implicit scalar solver
       allocate(ss(nscalar))
       do ii=1,nscalar
@@ -241,9 +242,10 @@ contains
     initialize_lpt: block
       use random, only: random_uniform
       use mathtools, only: Pi
-      real(WP) :: dp,VFavg,Tp,Lpart,Lparty,Lpartz,Volp
+      real(WP) :: dp,VFavg,Tp,Volp,Volc,x0
       real(WP), dimension(3) :: pos
-      integer :: i,ix,iy,iz,np_,np,npx,npy,npz
+      integer :: i,np
+      logical :: remove
       ! Create solver
       lp=lpt(cfg=cfg,name='LPT')
       ! Get particle density from the input
@@ -258,66 +260,51 @@ contains
       call param_read('Filter width',lp%filter_width)
       ! Set volume fraction
       call param_read('Particle volume fraction',VFavg)
+      ! Get particle starting position
+      call param_read('x0',x0)
       ! Root process initializes particles uniformly
       if (lp%cfg%amRoot) then
          ! Particle volume
          Volp = Pi/6.0_WP*dp**3
+         ! Cylinder volume
+         Volc=0.25_WP*Pi*D**2*(lp%cfg%xL-2.0_WP*x0)
          ! Get number of particles
-         Lpart = (Volp/VFavg)**(1.0_WP/3.0_WP)
-         npx=int(cfg%xL/Lpart)
-         npy = int(cfg%yL/Lpart)
-         Lparty = cfg%yL/real(npy,WP)
-         npz = int(cfg%zL/Lpart)
-         Lpartz = cfg%zL/real(npz,WP)
-         np_ = npx*npy*npz
-         np=0
-         ! Remove particles outside of the cylinder
-         do i=1,np_
-            ! Give position
-            ix = (i-1)/(npy*npz)
-            iy = (i-1-npy*npz*ix)/npz
-            iz = i-1-npy*npz*ix-npz*iy
-            pos(1) = lp%cfg%x(lp%cfg%imin)+(real(ix,WP)+0.5_WP)*Lpart
-            pos(2) = lp%cfg%y(lp%cfg%jmin)+(real(iy,WP)+0.5_WP)*Lparty
-            pos(3) = lp%cfg%z(lp%cfg%kmin)+(real(iz,WP)+0.5_WP)*Lpartz
-            if (sqrt(sum(pos(2:3)**2)).lt.0.5_WP*D-0.5_WP*dp) np=np+1
-         end do
+         np=int(VFavg*Volc/Volp)
          call lp%resize(np)
          ! Distribute particles
-         np=0
-         do i=1,np_
+         VFavg=0.0_WP
+         do i=1,np
             ! Give position
-            ix = (i-1)/(npy*npz)
-            iy = (i-1-npy*npz*ix)/npz
-            iz = i-1-npy*npz*ix-npz*iy
-            pos(1) = lp%cfg%x(lp%cfg%imin)+(real(ix,WP)+0.5_WP)*Lpart
-            pos(2) = lp%cfg%y(lp%cfg%jmin)+(real(iy,WP)+0.5_WP)*Lparty
-            pos(3) = lp%cfg%z(lp%cfg%kmin)+(real(iz,WP)+0.5_WP)*Lpartz
-            if (sqrt(sum(pos(2:3)**2)).ge.0.5_WP*D-0.5_WP*dp) cycle
-            np=np+1
-            lp%p(np)%pos(1)=pos(1)
-            lp%p(np)%pos(2)=pos(2)
-            lp%p(np)%pos(3)=pos(3)
-            
+            remove=.true.
+            do while (remove)
+               lp%p(i)%pos=[random_uniform(lp%cfg%x(lp%cfg%imin)+x0,lp%cfg%x(lp%cfg%imax+1)-x0),&
+                    &       random_uniform(lp%cfg%y(lp%cfg%jmin),lp%cfg%y(lp%cfg%jmax+1)),&
+                    &       random_uniform(lp%cfg%z(lp%cfg%kmin),lp%cfg%z(lp%cfg%kmax+1))]
+               if (lp%cfg%nz.eq.1) lp%p(i)%pos(3)=0.0_WP
+               if (sqrt(sum(lp%p(i)%pos(2:3)**2)).lt.0.5*D) remove=.false.
+            end do
             ! Give id (fixed)
-            lp%p(np)%id=-1
+            lp%p(i)%id=-1
             ! Set the diameter
-            lp%p(np)%d=dp
+            lp%p(i)%d=dp
             ! Set the temperature
-            !lp%p(np)%T=Tp
+            !lp%p(i)%T=Tp
             ! Give zero velocity
-            lp%p(np)%vel=0.0_WP
+            lp%p(i)%vel=0.0_WP
             ! Give zero collision force
-            lp%p(np)%Acol=0.0_WP
-            lp%p(np)%Tcol=0.0_WP
+            lp%p(i)%Acol=0.0_WP
+            lp%p(i)%Tcol=0.0_WP
             ! Give zero dt
-            lp%p(np)%dt=0.0_WP
+            lp%p(i)%dt=0.0_WP
             ! Locate the particle on the mesh
-            lp%p(np)%ind=lp%cfg%get_ijk_global(lp%p(np)%pos,[lp%cfg%imin,lp%cfg%jmin,lp%cfg%kmin])
+            lp%p(i)%ind=lp%cfg%get_ijk_global(lp%p(i)%pos,[lp%cfg%imin,lp%cfg%jmin,lp%cfg%kmin])
             ! Activate the particle
-            lp%p(np)%flag=0
+            lp%p(i)%flag=0
+            ! Sum up volume
+            VFavg=VFavg+Pi*lp%p(i)%d**3/6.0_WP
          end do
       end if
+      VFavg=VFavg/Volc
       call lp%sync()
 
       ! Get initial particle volume fraction
@@ -355,10 +342,6 @@ contains
       call param_read('Initial CO2',SC0(ind_CO2))
       call param_read('Inlet T',SCin(ind_T))
       call param_read('Inlet CO2',SCin(ind_CO2))
-      call param_read('Min T',SCmin(ind_T),default=-huge(1.0_WP))
-      call param_read('Max T',SCmax(ind_T),default=-huge(1.0_WP))
-      call param_read('Min CO2',SCmin(ind_CO2),default=-huge(1.0_WP))
-      call param_read('Max CO2',SCmax(ind_CO2),default=huge(1.0_WP))
       ! Assign values
       sc(ind_T)%SC=SC0(ind_T)
       sc(ind_CO2)%SC=SC0(ind_CO2)
@@ -372,32 +355,24 @@ contains
          ! Apply all other boundary conditions
          call sc(ii)%apply_bcond(time%t,time%dt)
       end do
-      ! Get density from pressure, temperature, and mass fraction
-      call get_sc_rho()
-      do ii=1,nscalar
-         call sc(ii)%rho_multiply()
-      end do
-      ! Update transport variables
-      call get_viscosity
-      call get_thermal_diffusivity
+      ! Get properties
+      call get_rho()
+      call get_viscosity()
+      call get_diffusivity()
     end block initialize_scalar
 
 
     ! Initialize our velocity field
     initialize_velocity: block
       integer :: n,i,j,k
-      real(WP) :: T,Y_CO2,Y_N2,Wmix
       ! Set density
       fs%rho=sc(1)%rho
       rhof=fs%rho/(1.0_WP-lp%VF)
       ! Read inlet velocity
-      call param_read('Inlet velocity',rhoUin)
+      call param_read('Inlet velocity',Uin)
       ! Set uniform momentum and velocity
-      T=SCin(ind_T); Y_CO2=SCin(ind_CO2); Y_N2=1.0_WP-Y_CO2
-      Wmix=1.0_WP/(Y_N2/W_N2+Y_CO2/W_CO2)
-      rhoUin=Pthermo*Wmix/(Rcst*T)*rhoUin
-      fs%rhoU=rhoUin; fs%rhoV=0.0_WP; fs%rhoW=0.0_WP
-      call fs%rho_divide()
+      fs%U=Uin; fs%V=0.0_WP; fs%W=0.0_WP
+      call fs%rho_multiply()
       call fs%interp_vel(Ui,Vi,Wi)
       resSC=0.0_WP
       call fs%get_div(drhodt=resSC)
@@ -417,13 +392,14 @@ contains
     ! Add Ensight output
     create_ensight: block
       ! Create Ensight output from cfg
-      ens_out=ensight(cfg=cfg,name='pipe')
+      ens_out=ensight(cfg=cfg,name='reactor')
       ! Create event for Ensight output
       ens_evt=event(time=time,name='Ensight output')
       call param_read('Ensight output period',ens_evt%tper)
       ! Add variables to output
       call ens_out%add_particle('particles',pmesh)
       call ens_out%add_vector('velocity',Ui,Vi,Wi)
+      call ens_out%add_scalar('divergence',fs%div)
       call ens_out%add_scalar('levelset',cfg%Gib)
       call ens_out%add_scalar('density',rhof)
       call ens_out%add_scalar('pressure',fs%P)
@@ -462,6 +438,7 @@ contains
       call mfile%add_column(fs%Wmax,'Wmax')
       call mfile%add_column(fs%Pmax,'Pmax')
       call mfile%add_column(fs%divmax,'Maximum divergence')
+      call mfile%add_column(int_RP,'Int(RP)')
       call mfile%add_column(fs%psolv%it,'Pressure iteration')
       call mfile%add_column(fs%psolv%rerr,'Pressure error')
       call mfile%write()
@@ -558,16 +535,11 @@ contains
 
              ! Apply this residual
              sc(ii)%SC=2.0_WP*sc(ii)%SC-sc(ii)%SCold+resSC
-             
-             ! Clip
-             where (sc(ii)%SC.lt.SCmin(ii)) sc(ii)%SC=SCmin(ii)
-             where (sc(ii)%SC.gt.SCmax(ii)) sc(ii)%SC=SCmax(ii)
 
              ! Apply IB forcing to enforce Neumann at the pipe walls
              ibforcing_sc: block
                use gp_class, only: neumann
-               where (cfg%Gib.lt.0.0_WP) sc(ii)%sc=SC0(ii)
-               call gp%apply_bcond(type=neumann,BP=0.0_WP,A=sc(ii)%sc)
+               call gp%apply_bcond(type=neumann,BP=0.0_WP,A=sc(ii)%SC)
              end block ibforcing_sc
 
              ! Apply other boundary conditions on the resulting field
@@ -584,19 +556,20 @@ contains
                   sc(ii)%SC(i,j,k)=SCin(ii)
                end do
              end block scalar_bcond
-             call sc(ii)%rho_multiply()
           end do
           ! ===================================================
 
           ! ============ UPDATE PROPERTIES ====================
-          ! Update dependent variables
-          call get_sc_rho()
-          call get_viscosity
-          call get_thermal_diffusivity
+          call get_rho()
+          call get_viscosity()
+          call get_diffusivity()
           ! ===================================================
 
 
           ! ============ VELOCITY SOLVER ======================
+
+          ! Build n+1 density
+          fs%rho=0.5_WP*(sc(1)%rho+sc(1)%rhoold)
 
           ! Build mid-time velocity and momentum
           fs%U=0.5_WP*(fs%U+fs%Uold); fs%rhoU=0.5_WP*(fs%rhoU+fs%rhoUold)
@@ -617,9 +590,9 @@ contains
             do k=fs%cfg%kmin_,fs%cfg%kmax_
                do j=fs%cfg%jmin_,fs%cfg%jmax_
                   do i=fs%cfg%imin_,fs%cfg%imax_
-                     !resU(i,j,k)=resU(i,j,k)+sum(fs%itpr_x(:,i,j,k)*srcUlp(i-1:i,j,k))
-                     !resV(i,j,k)=resV(i,j,k)+sum(fs%itpr_y(:,i,j,k)*srcVlp(i,j-1:j,k))
-                     !resW(i,j,k)=resW(i,j,k)+sum(fs%itpr_z(:,i,j,k)*srcWlp(i,j,k-1:k))
+                     resU(i,j,k)=resU(i,j,k)+sum(fs%itpr_x(:,i,j,k)*srcUlp(i-1:i,j,k))
+                     resV(i,j,k)=resV(i,j,k)+sum(fs%itpr_y(:,i,j,k)*srcVlp(i,j-1:j,k))
+                     resW(i,j,k)=resW(i,j,k)+sum(fs%itpr_z(:,i,j,k)*srcWlp(i,j,k-1:k))
                   end do
                end do
             end do
@@ -654,33 +627,30 @@ contains
             call fs%cfg%sync(fs%W)
           end block ibforcing
 
-          ! Apply other boundary conditions and update momentum
-          call fs%apply_bcond(time%tmid,time%dtmid)
+          ! Update momentum
           call fs%rho_multiply()
-          call fs%apply_bcond(time%tmid,time%dtmid)
 
           ! Reset Dirichlet BCs
           dirichlet_velocity: block
             use lowmach_class, only: bcond
             type(bcond), pointer :: mybc
             integer :: n,i,j,k
-            real(WP) :: VFx
             call fs%get_bcond('inflow',mybc)
             do n=1,mybc%itr%no_
                i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-               VFx=sum(fs%itpr_x(:,i,j,k)*cfg%VF(i-1:i,j,k))
-               fs%rhoU(i,j,k)=rhoUin*VFx
-               fs%rhoV(i,j,k)=0.0_WP
-               fs%rhoW(i,j,k)=0.0_WP
+               fs%U(i,j,k)=Uin
+               fs%V(i,j,k)=0.0_WP
+               fs%W(i,j,k)=0.0_WP
             end do
-            call fs%rho_divide()
+            call fs%rho_multiply()
           end block dirichlet_velocity
 
           ! Solve Poisson equation
-          resSC=0.0_WP!(sc(1)%rho-sc(1)%rhoold)/time%dt
+          call sc(1)%get_drhodt(dt=time%dt,drhodt=resSC)
           call fs%correct_mfr(drhodt=resSC)
           call fs%get_div(drhodt=resSC)
           fs%psolv%rhs=-fs%cfg%vol*fs%div/time%dtmid
+          call cfg%integrate(A=fs%psolv%rhs,integral=int_RP)
           fs%psolv%sol=0.0_WP
           call fs%psolv%solve()
           call fs%shift_p(fs%psolv%sol)
@@ -702,6 +672,7 @@ contains
        ! Recompute molecular density, interpolated velocity and divergence
        rhof=sc(1)%rho/(1.0_WP-lp%VF)
        call fs%interp_vel(Ui,Vi,Wi)
+       call sc(1)%get_drhodt(dt=time%dt,drhodt=resSC)
        call fs%get_div(drhodt=resSC)
 
        ! Output to ensight
@@ -743,7 +714,7 @@ contains
     ! timetracker
 
     ! Deallocate work arrays
-    deallocate(resU,resV,resW,resSC,srcUlp,srcVlp,srcWlp,srcSClp,Ui,Vi,Wi,rhof,gp_map)
+    deallocate(resU,resV,resW,resSC,srcUlp,srcVlp,srcWlp,srcSClp,Ui,Vi,Wi,rhof)
 
   end subroutine simulation_final
 
