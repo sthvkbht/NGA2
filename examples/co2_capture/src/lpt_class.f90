@@ -705,6 +705,7 @@ contains
           myp%pos=pold%pos+mydt*myp%vel
           myp%vel=pold%vel+mydt*(acc+this%gravity+myp%Acol)
           myp%angVel=pold%angVel+mydt*myp%Tcol/Ip
+          myp%Mc=pold%Mc+mydt*dmdt
           myp%T=pold%T+mydt*dTdt
           ! Relocalize
           myp%ind=this%cfg%get_ijk_global(myp%pos,myp%ind)
@@ -912,7 +913,7 @@ contains
          mc_clip=max(p%mc,0.0_WP)
 
          ! Mass transfer
-         dmdt=this%rho*W_CO2*(Pi/6.0_WP*p%d**3)*k_t*((1-(mc_clip/mc_s)**th_t)**(1/th_t)*PCO2-mc_clip/(mc_s*b_t))
+         dmdt=rhop*W_CO2*(Pi/6.0_WP*p%d**3)*k_t*((1-(mc_clip/mc_s)**th_t)**(1/th_t)*PCO2-mc_clip/(mc_s*b_t))
          
       case('NONE','None')
          dmdt=0.0_WP
