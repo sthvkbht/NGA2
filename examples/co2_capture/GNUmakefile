@@ -30,7 +30,7 @@ VPATH_LOCATIONS   += $(Ulocs)
 include $(NGA_HOME)/tools/GNUMake/Make.defs
 
 # Include NGA base code
-Bdirs   := core variable_density transform solver config grid libraries particles immersed data 
+Bdirs   := core variable_density transform solver config grid libraries immersed data 
 Bpack   += $(foreach dir, $(Bdirs), $(NGA_HOME)/src/$(dir)/Make.package)
 include $(Bpack)
 

@@ -25,11 +25,12 @@ Inlet CO2 : 0.1
 
 # Particle parameters
 Particle volume fraction : 0.1
-Particle diameter : 200e-6
-Particle density :  861.4
-Particle temperature : 300
-Particle heat capacity : 1580
-Filter width : 600e-6
+Particle diameter        : 200e-6
+Particle density         : 861.4
+Particle temperature     : 300
+Particle heat capacity   : 1580
+Filter width             : 600e-6
+Adsorption model         : BOS
 
 # Time integration
 Max timestep size :	1e-4

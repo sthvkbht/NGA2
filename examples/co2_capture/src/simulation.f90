@@ -40,7 +40,8 @@ module simulation
   !> Work arrays and fluid properties
   real(WP), dimension(:,:,:), allocatable :: resU,resV,resW,resSC
   real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi,rhof
-  real(WP), dimension(:,:,:), allocatable :: srcUlp,srcVlp,srcWlp,ghost
+  real(WP), dimension(:,:,:), allocatable :: srcUlp,srcVlp,srcWlp
+  real(WP), dimension(:,:,:), allocatable :: tmp1,tmp2
   real(WP), dimension(:,:,:,:), allocatable :: srcSClp
   real(WP) :: visc,Uin
 
@@ -229,12 +230,13 @@ contains
       allocate(srcUlp  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(srcVlp  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(srcWlp  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+      allocate(tmp1    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+      allocate(tmp2    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(srcSClp (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,1:nscalar))
       allocate(Ui      (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(Vi      (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(Wi      (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(rhof    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-      allocate(ghost   (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
     end block allocate_work_arrays
 
 
@@ -248,6 +250,10 @@ contains
       logical :: remove
       ! Create solver
       lp=lpt(cfg=cfg,name='LPT')
+      ! Set scalar information
+      call lp%scalar_init(sc=sc)
+      ! Get adsorption model from the input
+      call param_read('Adsorption model',lp%ads_model,default='NONE')
       ! Get particle density from the input
       call param_read('Particle density',lp%rho)
       ! Get particle diameter from the input
@@ -255,7 +261,7 @@ contains
       ! Set particle temperature
       call param_read('Particle temperature',Tp,default=298.15_WP)
       ! Get particle heat capacity from the input
-      !call param_read('Particle heat capacity',lp%pCp)
+      call param_read('Particle heat capacity',lp%pCp)
       ! Ger filter width
       call param_read('Filter width',lp%filter_width)
       ! Set volume fraction
@@ -288,7 +294,9 @@ contains
             ! Set the diameter
             lp%p(i)%d=dp
             ! Set the temperature
-            !lp%p(i)%T=Tp
+            lp%p(i)%T=Tp
+            ! Give zero mass of adsorbed CO2
+            lp%p(i)%Mc=0.0_WP
             ! Give zero velocity
             lp%p(i)%vel=0.0_WP
             ! Give zero collision force
@@ -320,13 +328,15 @@ contains
     ! Create partmesh object for Lagrangian particle output
     create_pmesh: block
       integer :: i
-      pmesh=partmesh(nvar=1,nvec=0,name='lpt')
+      pmesh=partmesh(nvar=3,nvec=0,name='lpt')
       pmesh%varname(1)='diameter'
-      !pmesh%varname(2)='temperature'
+      pmesh%varname(2)='temperature'
+      pmesh%varname(3)='CO2'
       call lp%update_partmesh(pmesh)
       do i=1,lp%np_
          pmesh%var(1,i)=lp%p(i)%d
-         !pmesh%var(2,i)=lp%p(i)%Tp
+         pmesh%var(2,i)=lp%p(i)%T
+         pmesh%var(3,i)=lp%p(i)%Mc
       end do
     end block create_pmesh
 
@@ -385,7 +395,6 @@ contains
     create_gp: block
       gp=gpibm(cfg=cfg,no=2)
       call gp%update()
-      ghost=real(gp%label,WP)
     end block create_gp
 
 
@@ -408,7 +417,6 @@ contains
       call ens_out%add_scalar('viscosity',fs%visc)
       call ens_out%add_scalar('diffusivity',sc(ind_T)%diff)
       call ens_out%add_scalar('epsp',lp%VF)
-      call ens_out%add_scalar('ghostpoints',ghost)
       ! Output to ensight
       if (ens_evt%occurs()) call ens_out%write_data(time%t)
     end block create_ensight
@@ -473,9 +481,15 @@ contains
       lptfile=monitor(amroot=lp%cfg%amRoot,name='lpt')
       call lptfile%add_column(time%n,'Timestep number')
       call lptfile%add_column(time%t,'Time')
+      call lptfile%add_column(lp%np,'Particle number')
       call lptfile%add_column(lp%VFmean,'VFp mean')
       call lptfile%add_column(lp%VFmax,'VFp max')
-      call lptfile%add_column(lp%np,'Particle number')
+      call lptfile%add_column(lp%Tmean,'Tp mean')
+      call lptfile%add_column(lp%Tmin,'Tp min')
+      call lptfile%add_column(lp%Tmax,'Tp max')
+      call lptfile%add_column(lp%Mmean,'Mc mean')
+      call lptfile%add_column(lp%Mmin,'Mc min')
+      call lptfile%add_column(lp%Mmax,'Mc max')
       call lptfile%write()
     end block create_monitor
 
@@ -485,7 +499,7 @@ contains
   !> Perform an NGA2 simulation
   subroutine simulation_run
     implicit none
-    integer :: ii
+    integer :: ii,i,j,k
 
     ! Perform time integration
     do while (.not.time%done())
@@ -499,8 +513,15 @@ contains
        lpt: block
          ! Get fluid stress and compute source terms
          call fs%get_div_stress(resU,resV,resW)
-         call lp%advance(dt=time%dtmid,U=fs%U,V=fs%V,W=fs%W,rho=rhof,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
-              srcU=srcUlp,srcV=srcVlp,srcW=srcWlp)
+         call lp%advance(dt=time%dtmid,U=fs%U,V=fs%V,W=fs%W,rho=rhof,visc=fs%visc,diff=sc(ind_T)%diff,&
+              stress_x=resU,stress_y=resV,stress_z=resW,T=sc(ind_T)%SC,YCO2=sc(ind_CO2)%SC,&
+              srcU=srcUlp,srcV=srcVlp,srcW=srcWlp,srcSC=srcSClp,fCp=fCp)
+         ! Compute PTKE and store source terms
+         !call lp%get_ptke(dt=time%dtmid,Ui=Ui,Vi=Vi,Wi=Wi,visc=fs%visc,rho=rhof,T=SC(ind_T)%SC,fCp=fCp,&
+         !     &           diff=sc(ind_T)%diff,Y=SC(ind_CO2)%sc,srcU=resU,srcV=resV,srcW=resW,srcT=tmp1,srcY=tmp2)
+         !srcUlp=srcUlp+resU; srcVlp=srcVlp+resV; srcWlp=srcWlp+resW
+         !srcSClp(:,:,:,ind_T)=srcSClp(:,:,:,ind_T)+tmp1
+         !srcSClp(:,:,:,ind_CO2)=srcSClp(:,:,:,ind_CO2)+tmp2
        end block lpt
 
        ! Remember old scalar
@@ -529,6 +550,15 @@ contains
 
              ! Assemble explicit residual
              resSC=time%dt*resSC-(2.0_WP*sc(ii)%rho*sc(ii)%SC-(sc(ii)%rho+sc(ii)%rhoold)*sc(ii)%SCold)
+
+             ! Heat & mass transfer from particles
+             do k=sc(ii)%cfg%kmin_,sc(ii)%cfg%kmax_
+                do j=sc(ii)%cfg%jmin_,sc(ii)%cfg%jmax_
+                   do i=sc(ii)%cfg%imin_,sc(ii)%cfg%imax_
+                      resSC(i,j,k)=resSC(i,j,k)+srcSClp(i,j,k,ii)
+                   end do
+                end do
+             end do
 
              ! Form implicit residual
              call sc(ii)%solve_implicit(time%dt,resSC,fs%rhoU,fs%rhoV,fs%rhoW)
@@ -682,6 +712,8 @@ contains
             call lp%update_partmesh(pmesh)
             do i=1,lp%np_
                pmesh%var(1,i)=lp%p(i)%d
+               pmesh%var(2,i)=lp%p(i)%T
+               pmesh%var(3,i)=lp%p(i)%Mc
             end do
           end block update_pmesh
           call ens_out%write_data(time%t)
@@ -714,7 +746,7 @@ contains
     ! timetracker
 
     ! Deallocate work arrays
-    deallocate(resU,resV,resW,resSC,srcUlp,srcVlp,srcWlp,srcSClp,Ui,Vi,Wi,rhof)
+    deallocate(resU,resV,resW,resSC,srcUlp,srcVlp,srcWlp,srcSClp,Ui,Vi,Wi,rhof,tmp1,tmp2)
 
   end subroutine simulation_final
 
