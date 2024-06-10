@@ -270,7 +270,6 @@ contains
       real(WP), intent(in) :: time
       character(len=str_medium) :: filename
       integer :: iunit,ierr,n,i
-      character(len=8) :: ierr_s
       integer :: ibuff
       character(len=80) :: cbuff
       type(MPI_File) :: ifile
@@ -282,7 +281,9 @@ contains
       type(prt), pointer :: my_prt
       real(SP), dimension(:,:,:), allocatable :: spbuff
       real(WP), dimension(:), allocatable :: temp_time
-      
+      character(len=12) :: ctime
+      real(WP) :: rtime
+
       ! Check provided time stamp and decide what to do
       if (this%ntime.eq.0) then
          ! First time stamp
@@ -293,9 +294,10 @@ contains
       else
          ! There are time stamps already, check where to insert
          rewind: do i=this%ntime,1,-1
-            if (this%time(i).lt.time-epsilon(1.0_WP)) then
-               n=i+1
-               exit rewind
+            ! Convert time to appropriate accuracy before comparing
+            write(ctime,'(es12.5)') time; read(ctime,'(es12.5)') rtime
+            if (this%time(i).lt.rtime) then
+               n=i+1; exit rewind
             end if
          end do rewind
          this%ntime=n; allocate(temp_time(1:this%ntime))
@@ -318,10 +320,7 @@ contains
          if (this%cfg%amRoot) then
             ! Open the file
             open(newunit=iunit,file=trim(filename),form='unformatted',status='replace',access='stream',iostat=ierr)
-            if (ierr.ne.0) then
-              write(ierr_s, "(I4)") ierr
-              call die('[ensight write data] Could not open file '//trim(filename)//'(error '//ierr_s//')')
-            end if
+            if (ierr.ne.0) call die('[ensight write data] Could not open file '//trim(filename))
             ! Write the header
             cbuff=trim(my_scl%name); write(iunit) cbuff
             cbuff='part'           ; write(iunit) cbuff
