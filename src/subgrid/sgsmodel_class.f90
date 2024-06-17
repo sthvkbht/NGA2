@@ -378,9 +378,6 @@ contains
             end do
          end do
       end do
-      ! Synchronize LM and MM
-      call this%cfg%sync(this%LM)
-      call this%cfg%sync(this%MM)
       
       ! Apply Meneveau's Lagrangian averaging strategy
       do k=this%cfg%kmin_,this%cfg%kmax_
