@@ -31,7 +31,7 @@ module sgsmodel_class
       ! LM and MM tensor norms and eddy viscosity
       real(WP), dimension(:,:,:), allocatable :: LM,MM          !< LM and MM tensor norms
       real(WP), dimension(:,:,:), allocatable :: visc           !< Turbulent eddy viscosity
-
+      
       ! Some information of the fields
       real(WP) :: max_visc                                      !< Maximum eddy viscosity
       real(WP) :: min_visc                                      !< Minimum eddy viscosity
@@ -403,6 +403,9 @@ contains
             end do
          end do
       end do
+      ! Synchronize LM and MM
+      call this%cfg%sync(this%LM)
+      call this%cfg%sync(this%MM)
       
       ! Compute the eddy viscosity
       do k=this%cfg%kmin_,this%cfg%kmax_
