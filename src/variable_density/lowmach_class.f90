@@ -1517,7 +1517,7 @@ contains
       end do
       
       ! Sync it
-	   call this%cfg%sync(ugradu)
+      call this%cfg%sync(ugradu)
       
       ! Deallocate velocity gradient storage
 	   deallocate(dudy,dudz,dvdx,dvdz,dwdx,dwdy)

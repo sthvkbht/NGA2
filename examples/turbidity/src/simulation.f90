@@ -34,7 +34,7 @@ module simulation
   public :: simulation_init,simulation_run,simulation_final
   
   !> Work arrays and fluid properties
-  real(WP), dimension(:,:,:,:), allocatable :: SR
+  real(WP), dimension(:,:,:,:), allocatable :: SR,vort,acc
   real(WP), dimension(:,:,:), allocatable :: resU,resV,resW
   real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi,rho0,dRHOdt
   real(WP), dimension(:,:,:), allocatable :: srcUlp,srcVlp,srcWlp
@@ -143,6 +143,8 @@ contains
 
     ! Allocate work arrays
     allocate_work_arrays: block
+      allocate(vort(1:3,cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+      allocate(acc (1:3,cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(SR      (1:6,cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_)) 
       allocate(dRHOdt  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
       allocate(resU    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
@@ -394,6 +396,14 @@ contains
        call time%adjust_dt()
        call time%increment()
 
+       ! Remember old Ui
+       store_old_vel: block
+         resU=fs%U; resV=fs%V; resW=fs%W
+         fs%U=fs%Uold; fs%V=fs%Vold; fs%W=fs%Wold
+         call fs%interp_vel(Ui_old,Vi_old,Wi_old)
+         fs%U=resU; fs%V=resV; fs%W=resW
+       end block store_old_vel
+
        ! Remember old density, velocity, and momentum
        fs%rhoold=fs%rho
        fs%Uold=fs%U; fs%rhoUold=fs%rhoU
@@ -405,9 +415,17 @@ contains
        lpt: block
          real(WP) :: dt_done,mydt
          ! Get fluid stress
-         call fs%get_div_stress(resU,resV,resW)
+         resU=0.0_WP; resV=0.0_WP; resW=0.0_WP; call fs%get_div_stress(resU,resV,resW)
          ! Get vorticity
-         call fs%get_vorticity(SR(1:3,:,:,:))
+         call fs%get_vorticity(vort)
+         ! Get fluid acceleration
+         call fs%get_ugradu(acc)
+         call fs%interp_vel(Ui,Vi,Wi)
+         if (time%dtold.gt.0.0_WP) then
+            acc(1,:,:,:)=acc(1,:,:,:)+(Ui-Ui_old)/time%dtold
+            acc(2,:,:,:)=acc(2,:,:,:)+(Vi-Vi_old)/time%dtold
+            acc(3,:,:,:)=acc(3,:,:,:)+(Wi-Wi_old)/time%dtold
+         end if
          ! Zero-out LPT source terms
          srcUlp=0.0_WP; srcVlp=0.0_WP; srcWlp=0.0_WP
          ! Sub-iteratore
@@ -419,8 +437,11 @@ contains
             mydt=min(lp_dt,time%dtmid-dt_done)
             ! Collide and advance particles
             call lp%collide(dt=mydt)
-            call lp%advance(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
-                 vortx=SR(1,:,:,:),vorty=SR(2,:,:,:),vortz=SR(3,:,:,:),srcU=tmp1,srcV=tmp2,srcW=tmp3)
+            call lp%advance(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,&
+            &               stress_x=resU         ,stress_y=resV         ,stress_z=resW         ,&
+            &               acc_x   =acc (1,:,:,:),acc_y   =acc (2,:,:,:),acc_z   =acc (3,:,:,:),&
+            &               vort_x  =vort(1,:,:,:),vort_y  =vort(2,:,:,:),vort_z  =vort(3,:,:,:),&
+            &               srcU=tmp1,srcV=tmp2,srcW=tmp3)
             srcUlp=srcUlp+tmp1
             srcVlp=srcVlp+tmp2
             srcWlp=srcWlp+tmp3
@@ -428,10 +449,8 @@ contains
             dt_done=dt_done+mydt
          end do
          ! Compute PTKE and store source terms
-         call lp%get_ptke(dt=time%dtmid,Ui=Ui,Vi=Vi,Wi=Wi,visc=fs%visc,rho=rho0,srcU=tmp1,srcV=tmp2,srcW=tmp3)
-         srcUlp=srcUlp+tmp1
-         srcVlp=srcVlp+tmp2
-         srcWlp=srcWlp+tmp3
+         !call lp%get_ptke(dt=time%dtmid,Ui=Ui,Vi=Vi,Wi=Wi,visc=fs%visc,rho=rho0,srcU=tmp1,srcV=tmp2,srcW=tmp3)
+         !srcUlp=srcUlp+tmp1; srcVlp=srcVlp+tmp2; srcWlp=srcWlp+tmp3
          ! Update density based on particle volume fraction
          fs%rho=rho*(1.0_WP-lp%VF)
          dRHOdt=(fs%RHO-fs%RHOold)/time%dtmid
@@ -580,7 +599,7 @@ contains
     ! timetracker
 
     ! Deallocate work arrays
-    deallocate(resU,resV,resW,srcUlp,srcVlp,srcWlp,Ui,Vi,Wi,dRHOdt,SR,tmp1,tmp2,tmp3)
+    deallocate(resU,resV,resW,srcUlp,srcVlp,srcWlp,Ui,Vi,Wi,dRHOdt,SR,tmp1,tmp2,tmp3,vort,acc)
 
   end subroutine simulation_final
 
