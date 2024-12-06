@@ -858,9 +858,7 @@ contains
 
     ! Compute acceleration due to drag
     compute_drag: block
-      real(WP) :: Re,tau,corr,b1,b2
-      ! Particle Reynolds number
-      Re=frho*norm2(p%vel-fvel)*p%d/fvisc+epsilon(1.0_WP)
+      real(WP) :: Re,tau,corr,b1,b2,CD
       ! Drag correction
       select case(trim(this%drag_model))
       case('None','none')
@@ -868,9 +866,11 @@ contains
       case('Stokes')
          corr=1.0_WP
       case('Schiller-Naumann','Schiller Naumann','SN')
+         Re=frho*norm2(p%vel-fvel)*p%d/fvisc+epsilon(1.0_WP)
          corr=1.0_WP+0.15_WP*Re**(0.687_WP)
       case('Tenneti')
          ! Tenneti and Subramaniam (2011)
+         Re=fFV*frho*norm2(p%vel-fvel)*p%d/fvisc+epsilon(1.0_WP)
          b1=5.81_WP*pVF/fVF**3+0.48_WP*pVF**(1.0_WP/3.0_WP)/fVF**4
          b2=pVF**3*Re*(0.95_WP+0.61_WP*pVF**3/fVF**2)
          corr=fVF*((1.0_WP+0.15_WP*Re**(0.687_WP))/fVF**3+b1+b2)
