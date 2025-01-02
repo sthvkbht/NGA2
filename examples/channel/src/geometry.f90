@@ -55,16 +55,10 @@ contains
       end block create_cfg
       
       ! Create masks for this config
-      create_walls: block
-        integer :: i,j,k
-        cfg%VF=1.0_WP
-        do k=cfg%kmino_,cfg%kmaxo_
-           do j=cfg%jmino_,cfg%jmaxo_
-              do i=cfg%imino_,cfg%imaxo_
-                 if (cfg%ym(j).lt.cfg%y(cfg%jmin).or.cfg%ym(j).gt.cfg%y(cfg%jmax+1)) cfg%VF(i,j,k)=0.0_WP
-              end do
-           end do
-        end do
+       create_walls: block
+         cfg%VF=0.0_WP
+         cfg%VF(cfg%imin_:cfg%imax_,cfg%jmin_:cfg%jmax_,cfg%kmin_:cfg%kmax_)=1.0_WP
+         call cfg%sync(cfg%VF)
       end block create_walls
       
    end subroutine geometry_init
