@@ -630,10 +630,10 @@ module simulation
          ! Get non-SL RHS and increment
          call fs%rhs(VF=lp%VF,VFU=lp%VFU,VFV=lp%VFV,VFW=lp%VFW,dQdt=dQdt(:,:,:,:,2))
          ! LPT source
-         dQdt(:,:,:,2,1)=dQdt(:,:,:,2,2)+srcIlp
-         dQdt(:,:,:,3,1)=dQdt(:,:,:,3,2)+srcUlp
-         dQdt(:,:,:,4,1)=dQdt(:,:,:,4,2)+srcVlp
-         dQdt(:,:,:,5,1)=dQdt(:,:,:,5,2)+srcWlp
+         dQdt(:,:,:,2,2)=dQdt(:,:,:,2,2)+srcIlp
+         dQdt(:,:,:,3,2)=dQdt(:,:,:,3,2)+srcUlp
+         dQdt(:,:,:,4,2)=dQdt(:,:,:,4,2)+srcVlp
+         dQdt(:,:,:,5,2)=dQdt(:,:,:,5,2)+srcWlp
          ! Advance
          fs%Q=fs%Qold+0.5_WP*time%dt*dQdt(:,:,:,:,2)
          ! Recompute primitive variables
@@ -647,10 +647,10 @@ module simulation
          ! Get non-SL RHS and increment
          call fs%rhs(VF=lp%VF,VFU=lp%VFU,VFV=lp%VFV,VFW=lp%VFW,dQdt=dQdt(:,:,:,:,3))
          ! LPT source
-         dQdt(:,:,:,2,1)=dQdt(:,:,:,2,3)+srcIlp
-         dQdt(:,:,:,3,1)=dQdt(:,:,:,3,3)+srcUlp
-         dQdt(:,:,:,4,1)=dQdt(:,:,:,4,3)+srcVlp
-         dQdt(:,:,:,5,1)=dQdt(:,:,:,5,3)+srcWlp
+         dQdt(:,:,:,2,3)=dQdt(:,:,:,2,3)+srcIlp
+         dQdt(:,:,:,3,3)=dQdt(:,:,:,3,3)+srcUlp
+         dQdt(:,:,:,4,3)=dQdt(:,:,:,4,3)+srcVlp
+         dQdt(:,:,:,5,3)=dQdt(:,:,:,5,3)+srcWlp
          ! Advance
          fs%Q=fs%Qold+1.0_WP*time%dt*dQdt(:,:,:,:,3)
          ! Recompute primitive variables
@@ -664,10 +664,10 @@ module simulation
          ! Get non-SL RHS and increment
          call fs%rhs(VF=lp%VF,VFU=lp%VFU,VFV=lp%VFV,VFW=lp%VFW,dQdt=dQdt(:,:,:,:,4))
          ! LPT source
-         dQdt(:,:,:,2,1)=dQdt(:,:,:,2,4)+srcIlp
-         dQdt(:,:,:,3,1)=dQdt(:,:,:,3,4)+srcUlp
-         dQdt(:,:,:,4,1)=dQdt(:,:,:,4,4)+srcVlp
-         dQdt(:,:,:,5,1)=dQdt(:,:,:,5,4)+srcWlp
+         dQdt(:,:,:,2,4)=dQdt(:,:,:,2,4)+srcIlp
+         dQdt(:,:,:,3,4)=dQdt(:,:,:,3,4)+srcUlp
+         dQdt(:,:,:,4,4)=dQdt(:,:,:,4,4)+srcVlp
+         dQdt(:,:,:,5,4)=dQdt(:,:,:,5,4)+srcWlp
          ! Advance
          fs%Q=fs%Qold+time%dt/6.0_WP*(dQdt(:,:,:,:,1)+2.0_WP*dQdt(:,:,:,:,2)+2.0_WP*dQdt(:,:,:,:,3)+dQdt(:,:,:,:,4))
          ! Recompute primitive variables

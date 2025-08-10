@@ -382,7 +382,12 @@ contains
                dQdt(i,j,k,4)=dQdt(i,j,k,4)+this%dxi*(FQx(i+1,j,k,4)-FQx(i  ,j,k,4))+this%dyi*(FQy(i,j  ,k,4)-FQy(i,j-1,k,4))+this%dzi*(FQz(i,j,k+1,4)-FQz(i,j,k  ,4))
                dQdt(i,j,k,5)=dQdt(i,j,k,5)+this%dxi*(FQx(i+1,j,k,5)-FQx(i  ,j,k,5))+this%dyi*(FQy(i,j+1,k,5)-FQy(i,j  ,k,5))+this%dzi*(FQz(i,j,k  ,5)-FQz(i,j,k-1,5))
                ! Viscous heating term
-               dQdt(i,j,k,2)=dQdt(i,j,k,2)+(1.0_WP-VF(i,j,k))*(FQx(i,j,k,3)*this%dxi*(this%U(i+1,j,k)-this%U(i,j,k))+FQy(i,j,k,4)*this%dyi*(this%V(i,j+1,k)-this%V(i,j,k))+FQz(i,j,k,5)*this%dzi*(this%W(i,j,k+1)-this%W(i,j,k))+0.25_WP*sum(FQz(i:i+1,j:j+1,k,2))+0.25_WP*sum(FQx(i,j:j+1,k:k+1,2))+0.25_WP*sum(FQy(i:i+1,j,k:k+1,2)))
+               if (present(VF)) then
+                  VF_=VF(i,j,k)
+               else
+                  VF_=0.0_WP
+               end if
+               dQdt(i,j,k,2)=dQdt(i,j,k,2)+(1.0_WP-VF_)*(FQx(i,j,k,3)*this%dxi*(this%U(i+1,j,k)-this%U(i,j,k))+FQy(i,j,k,4)*this%dyi*(this%V(i,j+1,k)-this%V(i,j,k))+FQz(i,j,k,5)*this%dzi*(this%W(i,j,k+1)-this%W(i,j,k))+0.25_WP*sum(FQz(i:i+1,j:j+1,k,2))+0.25_WP*sum(FQx(i,j:j+1,k:k+1,2))+0.25_WP*sum(FQy(i:i+1,j,k:k+1,2)))
             end do
          end do
       end do
