@@ -13,6 +13,7 @@ module mathtools
    public :: arctan
    public :: eigensolve3
    public :: quadrature_rule
+   public :: triproj
    
    ! Trigonometric parameters
    real(WP), parameter :: Pi   =3.1415926535897932385_WP
@@ -95,30 +96,6 @@ contains
       ! Deallocate the work arrays
       deallocate(A,B)
    end subroutine fd_itp_build
-   
-   
-!!$   function inverse_matrix(A) result(Ainv)
-!!$      use messager, only: die
-!!$      implicit none
-!!$      real(WP), dimension(:,:), intent(in) :: A
-!!$      real(WP), dimension(size(A,1),size(A,2)) :: Ainv
-!!$      real(WP), dimension(size(A,1)) :: work
-!!$      integer , dimension(size(A,1)) :: ipiv
-!!$      integer :: n,info
-!!$      external DGETRF
-!!$      external DGETRI
-!!$      ! Copy A over to Ainv to prevent it from being overwritten by LAPACK
-!!$      Ainv=A
-!!$      ! Store size
-!!$      n=size(A,1)
-!!$      ! Compute LU factorization of matrix A using partial pivoting with row interchanges
-!!$      call DGETRF(n,n,Ainv,n,ipiv,info)
-!!$      ! Error handling
-!!$      if (info.ne.0) call die('[inverse_matrix] Matrix is numerically singular')
-!!$      ! Compute inverse of matrix using LU factorization computed above
-!!$      call DGETRI(n,Ainv,n,ipiv,work,n,info)
-!!$      if (info.ne.0) call die('[inverse_matrix] Matrix inversion failed')
-!!$    end function inverse_matrix
 
 
    function inverse_matrix(A) result(Ainv)
@@ -388,6 +365,161 @@ contains
       ! Rescale to be in [0,1]
       x=0.5_WP*(1.0_WP+x); w=0.5_WP*w
    end subroutine quadrature_rule
-   
+
+
+    ! 3D projection of a vertex onto a triangle
+    subroutine triproj(myp,myt1,myt2,myt3,proj)
+    implicit none
+    real(WP), dimension(3), intent(in)  :: myp,myt1,myt2,myt3
+    real(WP), dimension(3), intent(out) :: proj
+    real(WP), dimension(3) :: v1,v2,vp
+    real(WP) :: a,b,c,d,e,f
+    real(WP) :: det,s,t,inv
+    real(WP) :: denom,numer,tmp0,tmp1
+    ! To do: check for colinearity and/or too small triangles
+    
+    ! Build triangle information
+    v1=myt2-myt1
+    v2=myt3-myt1
+    vp=myt1-myp
+    a=dot_product(v1,v1)
+    b=dot_product(v1,v2)
+    c=dot_product(v2,v2)
+    d=dot_product(v1,vp)
+    e=dot_product(v2,vp)
+    f=dot_product(vp,vp)
+    det=a*c-b*b
+    s  =b*e-c*d
+    t  =b*d-a*e
+    
+    ! Check if projection lies inside the triangle
+    if (s+t.le.det) then
+       if (s.lt.0.0_WP) then
+          if (t.lt.0.0_WP) then
+             if (d.lt.0.0_WP) then
+                t=0.0_WP
+                if (-d.ge.a) then
+                   s=1.0_WP
+                else
+                   s=-d/a
+                end if
+             else
+                s=0.0_WP
+                if (e.ge.0.0_WP) then
+                   t=0.0_WP
+                else
+                   if (-e.ge.c) then
+                      t=1.0_WP
+                   else
+                      t=-e/c
+                   end if
+                end if
+             end if
+          else
+             s=0.0_WP
+             if (e.ge.0.0_WP) then
+                t=0.0_WP
+             else
+                if (-e.ge.c) then
+                   t=1.0_WP
+                else
+                   t=-e/c
+                end if
+             end if
+          end if
+       else
+          if (t.lt.0.0_WP) then
+             t=0.0_WP
+             if (d.ge.0.0_WP) then
+                s=0.0_WP
+             else
+                if (-d.ge.a) then
+                   s=1.0_WP
+                else
+                   s=-d/a
+                end if
+             end if
+          else
+             inv=1.0_WP/det
+             s=s*inv
+             t=t*inv
+          end if
+       end if
+    else
+       if (s.lt.0.0_WP) then
+          tmp0=b+d
+          tmp1=c+e
+          if (tmp1.gt.tmp0) then
+             numer=tmp1-tmp0
+             denom=a-2.0_WP*b+c
+             if (numer.ge.denom) then
+                s=1.0_WP
+                t=0.0_WP
+             else
+                s=numer/denom
+                t=1.0_WP-s
+             end if
+          else
+             s=0.0_WP
+             if (tmp1.le.0.0_WP) then
+                t=1.0_WP
+             else
+                if (e.ge.0.0_WP) then
+                   t=0.0_WP
+                else
+                   t=-e/c
+                end if
+             end if
+          end if
+       else
+          if (t.lt.0.0_WP) then
+             tmp0=b+e
+             tmp1=a+d
+             if (tmp1.gt.tmp0) then
+                numer=tmp1-tmp0
+                denom=a-2.0_WP*b+c
+                if (numer.ge.denom) then
+                   t=1.0_WP
+                   s=0.0_WP
+                else
+                   t=numer/denom
+                   s=1.0_WP-t
+                end if
+             else
+                t=0.0_WP
+                if (tmp1.le.0.0_WP) then
+                   s=1.0_WP
+                else
+                   if (d.ge.0.0_WP) then
+                      s=0.0_WP
+                   else
+                      s=-d/a
+                   end if
+                end if
+             end if
+          else
+             numer=c+e-b-d
+             if (numer.le.0.0_WP) then
+                s=0.0_WP
+                t=1.0_WP
+             else
+                denom=a-2.0_WP*b+c
+                if (numer.ge.denom) then
+                   s=1.0_WP
+                   t=0.0_WP
+                else
+                   s=numer/denom
+                   t=1.0_WP-s
+                end if
+             end if
+          end if
+       end if
+    end if
+    
+    ! Get projection
+    proj=myt1+s*v1+t*v2
+    
+    return
+  end subroutine triproj
    
 end module mathtools
