@@ -96,7 +96,7 @@ contains
       
       ! Initialize time tracker
       initialize_timetracker: block
-         this%time=timetracker(amRoot=this%cfg%amRoot)
+         this%time=timetracker(amRoot=this%cfg%amRoot,name='FarField',print_info=.false.)
       end block initialize_timetracker
       
       ! Create multiphase compressible flow solver
@@ -112,7 +112,7 @@ contains
          this%lp%filter_width=3.5_WP*this%cfg%min_meshsize
          ! Create particle mesh
          this%pmesh=partmesh(nvar=2,nvec=1,name='lpt')
-         this%pmesh%varname(1)='diameter'
+         this%pmesh%varname(1)='radius'
          this%pmesh%varname(2)='temperature'
          this%pmesh%vecname(1)='velocity'
       end block create_lpt_solver
@@ -203,12 +203,16 @@ contains
          call this%lptfile%add_column(this%lp%np,'Particle number')
          call this%lptfile%add_column(this%lp%VFmean,'mean(VFp)')
          call this%lptfile%add_column(this%lp%VFmax,'max(VFp)')
+         call this%lptfile%add_column(this%lp%dmin,'min(d)')
+         call this%lptfile%add_column(this%lp%dmax,'max(d)')
          call this%lptfile%add_column(this%lp%Umin,'min(U)')
          call this%lptfile%add_column(this%lp%Umax,'max(U)')
          call this%lptfile%add_column(this%lp%Vmin,'min(V)')
          call this%lptfile%add_column(this%lp%Vmax,'max(V)')
          call this%lptfile%add_column(this%lp%Wmin,'min(W)')
          call this%lptfile%add_column(this%lp%Wmax,'max(W)')
+         call this%lptfile%add_column(this%lp%Tmin,'min(T)')
+         call this%lptfile%add_column(this%lp%Tmax,'max(T)')
          call this%lptfile%add_column(this%lp%Remax,'max(Re)')
          call this%lptfile%add_column(this%lp%Mamax,'max(Ma)')
          call this%lptfile%add_column(this%lp%Knmax,'max(Kn)')
@@ -330,7 +334,7 @@ contains
       ! Update pmesh
       call this%lp%update_partmesh(this%pmesh)
       do n=1,this%lp%np_
-         this%pmesh%var  (1,n)=this%lp%p(n)%d
+         this%pmesh%var  (1,n)=this%lp%p(n)%d*0.5_WP
          this%pmesh%var  (2,n)=this%lp%p(n)%T
          this%pmesh%vec(:,1,n)=this%lp%p(n)%vel
       end do

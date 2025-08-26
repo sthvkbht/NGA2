@@ -7,7 +7,7 @@ Density ratio :     815
 Sound speed ratio : 4.3
 !------- inviscid --------
 Shock Mach number : 5.12
-Shock location :   -0.8
+Shock location :   -0.6
 !------- viscous ---------
 Gas Reynolds number : 1e5
 Viscosity ratio :     58.3
@@ -15,26 +15,27 @@ Viscosity ratio :     58.3
 # Maximum simulation time
 Max time : 30
 
-# Ensight output
+# Postprocessing output
 Ensight output period : 0.1
+Drop analysis period :  0.1
 
 # Shock-drop simulation
 !- Parallelization ----
 Shock-drop partition : 2 4 1
 !- Mesh ---------------
 Shock-drop dx :     0.01
-Shock-drop max nx : !400
 Shock-drop max nz : 1
+Shock-drop margin : 0.25
 !- Time ---------------
 Shock-drop dt :  2.5e-3
 Shock-drop CFL : 1
 !- Remeshing ----------
-Remeshing period : 0.5
+Remeshing period : 0.2
 
 # Far-field simulation
 !- Parallelization ----
 Farfield partition : 8 1 1
 !- Mesh ---------------
 Farfield dx : 0.04
-Farfield nx : 300 300 1
+Farfield nx : 200 200 1!200
 Farfield X0 : -2

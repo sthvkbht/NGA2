@@ -6,6 +6,8 @@ module simulation
    use ffshock_class,     only: ffshock
    use coupler_class,     only: coupler
    use event_class,       only: event
+   use monitor_class,     only: monitor
+   use timer_class,       only: timer
    implicit none
    private; public :: simulation_init,simulation_run,simulation_final
    
@@ -24,17 +26,33 @@ module simulation
    
    !> Ensight output event
    type(event) :: ens_evt
+   type(event) :: drop_evt
    
    !> Remeshing event
    type(event) :: remesh_evt
    real(WP), dimension(3) :: Lmin,Lmax
+   real(WP) :: Lmargin
    
    !> Maximum mesh size
    integer :: max_nx,max_ny,max_nz
    
+   !> Timing
+   type(monitor) :: timefile !< Timing monitoring
+   type(timer)   :: tstep    !< Timer for step
+   type(timer)   :: tsd      !< Timer for ShockDrop
+   type(timer)   :: tff      !< Timer for FarField
+   type(timer)   :: tcpl     !< Timer for coupling
+   type(timer)   :: tmesh    !< Timer for remeshing
+   type(timer)   :: ttrans   !< Timer for drop transfer
+   
    !> Equations of state
    real(WP) :: PinfL,GammaL,CvL
    real(WP) :: PinfG,GammaG,CvG
+   
+   !> Spherical harmonics perturbation parameters
+   integer :: nsh_modes=0
+   integer , dimension(:), allocatable :: l_modes,m_modes
+   real(WP), dimension(:), allocatable :: amp_modes,phase_modes
    
    !> Flow parameters
    real(WP) :: Ms,Xs
@@ -314,12 +332,60 @@ contains
          end if
       end block initialize_parameters
       
+      ! Initialize spherical harmonics modes - all cores
+      initialize_sph_modes: block
+         use param,     only: param_read,param_exists
+         use parallel,  only: amRoot,MPI_REAL_WP,comm
+         use string,    only: str_long
+         use messager,  only: log
+         use mpi_f08,   only: MPI_BCAST,MPI_INTEGER
+         use random,    only: random_initialize,random_uniform
+         use mathtools, only: twoPi
+         character(str_long) :: message
+         integer  :: i,ierr
+         real(WP) :: r
+         ! Read number of modes (or set default)
+         call param_read('SphHarm Nmode',nsh_modes,default=0)
+         if (nsh_modes.gt.0) then
+            allocate(l_modes(nsh_modes),m_modes(nsh_modes),amp_modes(nsh_modes),phase_modes(nsh_modes))
+            if (param_exists('SphHarm l'))     call param_read('SphHarm l',    l_modes)
+            if (param_exists('SphHarm m'))     call param_read('SphHarm m',    m_modes)
+            if (param_exists('SphHarm amp'))   call param_read('SphHarm amp',  amp_modes)
+            if (param_exists('SphHarm phase')) call param_read('SphHarm phase',phase_modes)
+         else
+            ! Generate random modes if not provided
+            nsh_modes=8
+            allocate(l_modes(nsh_modes),m_modes(nsh_modes),amp_modes(nsh_modes),phase_modes(nsh_modes))
+            if (amRoot) then
+               call random_initialize()
+               do i=1,nsh_modes
+                  l_modes    (i)=1+i
+                  m_modes    (i)=i-nsh_modes/2
+                  amp_modes  (i)=1.0e-3_WP
+                  phase_modes(i)=random_uniform(lo=0.0_WP,hi=twoPi)
+               end do
+            end if
+            call MPI_BCAST(l_modes    ,nsh_modes,MPI_INTEGER,0,comm,ierr)
+            call MPI_BCAST(m_modes    ,nsh_modes,MPI_INTEGER,0,comm,ierr)
+            call MPI_BCAST(amp_modes  ,nsh_modes,MPI_REAL_WP,0,comm,ierr)
+            call MPI_BCAST(phase_modes,nsh_modes,MPI_REAL_WP,0,comm,ierr)
+         end if
+         ! Log the selected modes
+         if (amRoot) then
+            write(message,'("[SphHarm] Nmode  =",i6)')         nsh_modes; call log(message)
+            write(message,'("[SphHarm] l      =",1000(i4,x))') l_modes  ; call log(message)
+            write(message,'("[SphHarm] m      =",1000(i4,x))') m_modes  ; call log(message)
+            write(message,'("[SphHarm] amp    =",1000(es12.5,x))') amp_modes  ; call log(message)
+            write(message,'("[SphHarm] phase  =",1000(es12.5,x))') phase_modes; call log(message)
+         end if
+      end block initialize_sph_modes
+      
       ! Initialize time tracker
       initialize_timetracker: block
          use parallel, only: amRoot
          use param,    only: param_read
          ! Create time tracker object
-         time=timetracker(amRoot=amRoot)
+         time=timetracker(amRoot=amRoot,name='Global')
          ! Set time integration parameters
          call param_read('Shock-drop dt',time%dtmax); time%dt=time%dtmax
          call param_read('Shock-drop CFL',time%cflmax)
@@ -335,12 +401,13 @@ contains
          real(WP) :: dx
          ! Read in mesh size and desired partition
          call param_read('Shock-drop dx',dx)
+         call param_read('Shock-drop margin',Lmargin)
          call param_read('Shock-drop max nx',max_nx,default=0)
          call param_read('Shock-drop max ny',max_ny,default=0)
          call param_read('Shock-drop max nz',max_nz,default=0)
          call param_read('Shock-drop partition',partition)
          ! Set initial domain of size (2D)^3 centered on (0,0,0)
-         meshsize=min(nint([2.0_WP/dx,2.0_WP/dx,2.0_WP/dx]),merge([max_nx,max_ny,max_nz],huge(1),[max_nx,max_ny,max_nz].gt.0))
+         meshsize=min(nint([(1.0_WP+2.0_WP*Lmargin)/dx,(1.0_WP+2.0_WP*Lmargin)/dx,(1.0_WP+2.0_WP*Lmargin)/dx]),merge([max_nx,max_ny,max_nz],huge(1),[max_nx,max_ny,max_nz].gt.0))
          X0=-0.5_WP*real(meshsize,WP)*dx
          ! Allocate and initialize the shock-drop solver
          allocate(sd); call sd%initialize(dx=dx,meshsize=meshsize,startloc=X0,group=group,partition=partition,continue_monitor=.false.)
@@ -445,6 +512,9 @@ contains
          call ff%fs%interp_vel(ff%Ui,ff%Vi,ff%Wi)
          ! Compute local Mach number
          ff%Ma=sqrt(ff%Ui**2+ff%Vi**2+ff%Wi**2)/ff%fs%C
+         ! Initialize lpt thermodynamic variables
+         ff%lp%Cp=GammaL*CvL !< Incorrect for stiffened gas...
+         ff%lp%rho=rhoL      !< Should be variable...
          ! Perform monitoring
          call ff%output_monitor()
       end block initialize_ff
@@ -467,21 +537,68 @@ contains
          end if
       end block initialize_ensight
       
+      ! Drop analysis event
+      drop_analysis_event: block
+         use param, only: param_read
+         drop_evt=event(time=time,name='Drop analysis')
+         call param_read('Drop analysis period',drop_evt%tper)
+      end block drop_analysis_event
+      
       ! Initialize remeshing event
       initialize_remeshing: block
          use param, only: param_read
          remesh_evt=event(time=time,name='Remeshing')
          call param_read('Remeshing period',remesh_evt%tper)
+         call sd%meshfile%write()
       end block initialize_remeshing
       
+      ! Initialize timers
+      initialize_timers: block
+         use parallel, only: comm,amRoot
+         ! Create timers
+         tstep =timer(comm=comm,name='Timestep')
+         tsd   =timer(comm=comm,name='ShockDrop')
+         tff   =timer(comm=comm,name='FarField')
+         tcpl  =timer(comm=comm,name='Coupling')
+         tmesh =timer(comm=comm,name='Remeshing')
+         ttrans=timer(comm=comm,name='Transfer')
+         ! Create corresponding monitor file
+         timefile=monitor(amRoot,'timing')
+         call timefile%add_column(time%n,'Timestep number')
+         call timefile%add_column(time%t,'Time')
+         call timefile%add_column(tstep%time ,trim(tstep%name))
+         call timefile%add_column(tsd%time   ,trim(tsd%name))
+         call timefile%add_column(tff%time   ,trim(tff%name))
+         call timefile%add_column(tcpl%time  ,trim(tcpl%name))
+         call timefile%add_column(tmesh%time ,trim(tmesh%name))
+         call timefile%add_column(ttrans%time,trim(ttrans%name))
+      end block initialize_timers
+      
    contains
-      !> Level set function for a sphere of unity diameter centered at (0,0,0)
+      !> Level set function for a perturbed sphere of unity diameter centered at (0,0,0)
       function levelset_drop(xyz,t) result(G)
+         use mathtools, only: spherical_harmonic
          implicit none
          real(WP), dimension(3),intent(in) :: xyz
          real(WP), intent(in) :: t
-         real(WP) :: G
-         G=0.5_WP-sqrt(sum(xyz**2))
+         real(WP) :: G,r,theta,phi,perturb
+         integer :: i
+         ! Spherical coordinates
+         r=sqrt(sum(xyz**2))
+         if (r.gt.1.0e-12_WP) then
+            theta= acos(xyz(3)/r)
+            phi  =atan2(xyz(2),xyz(1))
+         else
+            theta=0.0_WP
+            phi  =0.0_WP
+         end if
+         ! Compute perturbation
+         perturb=0.0_WP
+         do i=1,nsh_modes
+            perturb=perturb+amp_modes(i)*spherical_harmonic(l_modes(i),m_modes(i),theta,phi+phase_modes(i))
+         end do
+         ! Level set function for a sphere with radius 0.5 and perturbation
+         G=0.5_WP+perturb-r
       end function levelset_drop
    end subroutine simulation_init
    
@@ -493,36 +610,59 @@ contains
       ! Overall time integration
       do while (.not.time%done())
          
+         ! Reset all timers and start timestep timer
+         call tstep%reset(); call tsd%reset(); call tff%reset(); call tcpl%reset(); call tmesh%reset(); call ttrans%reset()
+         call tstep%start()
+         
          ! Adjust time step size using sd CFL info
          call sd%fs%get_cfl(dt=time%dt,cfl=time%cfl)
          call time%adjust_dt()
          call time%increment()
          
          ! Handle coupling
+         call tcpl%start()
          call couple_sd2ff()
          call couple_ff2sd()
+         call tcpl%stop()
          
          ! Advance shock-drop simulation
+         call tsd%start()
          call sd%step(dt=time%dt)
+         call tsd%stop()
          
          ! Advance farfield simulation
+         call tff%start()
          call ff%step(dt=time%dt)
+         call tff%stop()
          
          ! Transfer drops
+         call ttrans%start()
          call transfer()
+         call ttrans%stop()
          
          ! Perform monitoring
          call sd%output_monitor()
          call ff%output_monitor()
-         
-         ! Remesh sd
-         if (remesh_evt%occurs()) call remesh()
          
          ! Perform Ensight output
          if (ens_evt%occurs()) then
             call sd%output_ensight(t=time%t)
             call ff%output_ensight(t=time%t)
          end if
+         
+         ! Droplet analysis
+         if (drop_evt%occurs()) call sd%analyze_drops()
+         
+         ! Remesh sd
+         call tmesh%start()
+         if (remesh_evt%occurs()) call remesh()
+         call tmesh%stop()
+         
+         ! Stop timestep timer
+         call tstep%stop()
+         
+         ! Output timing info
+         call timefile%write()
          
       end do
       
@@ -534,13 +674,12 @@ contains
       use, intrinsic :: iso_fortran_env, only: output_unit
       use messager, only: log
       use parallel, only: amRoot
+      use string,   only: str_long
       implicit none
+      character(len=str_long) :: message
       type(shockdrop), pointer :: sdnew
       type(coupler)  , pointer :: sdnew2ff
       type(coupler)  , pointer :: ff2sdnew
-      
-      ! Some messaging
-      if (amRoot) then; call log('Begin remeshing...'); write(output_unit,'("Begin remeshing...")'); end if
       
       ! Setup new shock-drop simulation - all cores
       setup_sdnew: block
@@ -554,12 +693,12 @@ contains
          dx=sd%fs%dx
          partition=[sd%cfg%npx,sd%cfg%npy,sd%cfg%npz]
          ! Get meshsize that encompasses current liquid extent
-         X0(1)=dx*floor  ((Lmin(1)-0.5_WP)/dx); if (sd%cfg%nx.eq.1) X0(1)=Lmin(1)
-         X0(2)=dx*floor  ((Lmin(2)-0.5_WP)/dx); if (sd%cfg%ny.eq.1) X0(2)=Lmin(2)
-         X0(3)=dx*floor  ((Lmin(3)-0.5_WP)/dx); if (sd%cfg%nz.eq.1) X0(3)=Lmin(3)
-         X1(1)=dx*ceiling((Lmax(1)+0.5_WP)/dx); if (sd%cfg%nx.eq.1) X1(1)=Lmax(1)
-         X1(2)=dx*ceiling((Lmax(2)+0.5_WP)/dx); if (sd%cfg%ny.eq.1) X1(2)=Lmax(2)
-         X1(3)=dx*ceiling((Lmax(3)+0.5_WP)/dx); if (sd%cfg%nz.eq.1) X1(3)=Lmax(3)
+         X0(1)=dx*floor  ((Lmin(1)-Lmargin)/dx); if (sd%cfg%nx.eq.1) X0(1)=Lmin(1)
+         X0(2)=dx*floor  ((Lmin(2)-Lmargin)/dx); if (sd%cfg%ny.eq.1) X0(2)=Lmin(2)
+         X0(3)=dx*floor  ((Lmin(3)-Lmargin)/dx); if (sd%cfg%nz.eq.1) X0(3)=Lmin(3)
+         X1(1)=dx*ceiling((Lmax(1)+Lmargin)/dx); if (sd%cfg%nx.eq.1) X1(1)=Lmax(1)
+         X1(2)=dx*ceiling((Lmax(2)+Lmargin)/dx); if (sd%cfg%ny.eq.1) X1(2)=Lmax(2)
+         X1(3)=dx*ceiling((Lmax(3)+Lmargin)/dx); if (sd%cfg%nz.eq.1) X1(3)=Lmax(3)
          meshsize=nint((X1-X0)/dx)
          ! Ensure consistency across ranks
          call MPI_BCAST(meshsize,3,MPI_INTEGER,0,sd%cfg%comm,ierr)
@@ -664,8 +803,15 @@ contains
          call sd%finalize(); deallocate(sd); sd=>sdnew
       end block transfer_allocation
       
+      ! Monitor mesh size
+      call sd%meshfile%write()
+      
       ! Some messaging
-      if (amRoot) then; call log('Done remeshing!'); write(output_unit,'("Done remeshing!")'); end if
+      if (amRoot) then
+         write(message,'(">> Remeshed shockdrop domain: ",i0,"x",i0,"x",i0," from X0=[",es12.5,"x",es12.5,"x",es12.5,"]")') sd%cfg%nx,sd%cfg%ny,sd%cfg%nz,sd%cfg%x(sd%cfg%imin),sd%cfg%y(sd%cfg%jmin),sd%cfg%z(sd%cfg%kmin)
+         call log(trim(message))
+         write(output_unit,*) trim(message)
+      end if
       
    end subroutine remesh
    
@@ -674,62 +820,57 @@ contains
    subroutine couple_sd2ff()
       implicit none
       integer  :: i,j,k,n
-      real(WP) :: coeff,lambda,strength
-      real(WP), dimension(:,:,:,:), allocatable :: Q
+      real(WP) :: coeffc,coeffx,coeffy,coeffz,lambda,strength
+      real(WP), dimension(:,:,:), allocatable :: VOFtmp,RHOtmp,Itmp,Utmp,Vtmp,Wtmp
       
       ! Sponge parameters
       lambda=2.5_WP*ff%fs%dx
       strength=0.25_WP
       
       ! Allocate storage for transfered variables
-      allocate(Q(ff%fs%cfg%imino_:ff%fs%cfg%imaxo_,ff%fs%cfg%jmino_:ff%fs%cfg%jmaxo_,ff%fs%cfg%kmino_:ff%fs%cfg%kmaxo_,0:sd%fs%nQ)); Q=0.0_WP
+      allocate(VOFtmp(ff%fs%cfg%imino_:ff%fs%cfg%imaxo_,ff%fs%cfg%jmino_:ff%fs%cfg%jmaxo_,ff%fs%cfg%kmino_:ff%fs%cfg%kmaxo_)); VOFtmp=0.0_WP
+      allocate(RHOtmp(ff%fs%cfg%imino_:ff%fs%cfg%imaxo_,ff%fs%cfg%jmino_:ff%fs%cfg%jmaxo_,ff%fs%cfg%kmino_:ff%fs%cfg%kmaxo_)); RHOtmp=0.0_WP
+      allocate(Itmp  (ff%fs%cfg%imino_:ff%fs%cfg%imaxo_,ff%fs%cfg%jmino_:ff%fs%cfg%jmaxo_,ff%fs%cfg%kmino_:ff%fs%cfg%kmaxo_)); Itmp  =0.0_WP
+      allocate(Utmp  (ff%fs%cfg%imino_:ff%fs%cfg%imaxo_,ff%fs%cfg%jmino_:ff%fs%cfg%jmaxo_,ff%fs%cfg%kmino_:ff%fs%cfg%kmaxo_)); Utmp  =0.0_WP
+      allocate(Vtmp  (ff%fs%cfg%imino_:ff%fs%cfg%imaxo_,ff%fs%cfg%jmino_:ff%fs%cfg%jmaxo_,ff%fs%cfg%kmino_:ff%fs%cfg%kmaxo_)); Vtmp  =0.0_WP
+      allocate(Wtmp  (ff%fs%cfg%imino_:ff%fs%cfg%imaxo_,ff%fs%cfg%jmino_:ff%fs%cfg%jmaxo_,ff%fs%cfg%kmino_:ff%fs%cfg%kmaxo_)); Wtmp  =0.0_WP
       
-      ! Exchange data using coupler
-      call sd2ff%push(sd%fs%VF,loc='c'); call sd2ff%transfer(); call sd2ff%pull(Q(:,:,:,0),loc='c')
-      do n=1,4
-         call sd2ff%push(sd%fs%Q(:,:,:,n),loc='c'); call sd2ff%transfer(); call sd2ff%pull(Q(:,:,:,n),loc='c')
-      end do
-      call sd2ff%push(sd%Ui,loc='c'); call sd2ff%transfer(); call sd2ff%pull(Q(:,:,:,5),loc='c')
-      call sd2ff%push(sd%Vi,loc='c'); call sd2ff%transfer(); call sd2ff%pull(Q(:,:,:,6),loc='c')
-      call sd2ff%push(sd%Wi,loc='c'); call sd2ff%transfer(); call sd2ff%pull(Q(:,:,:,7),loc='c')
-      
-      ! Compute nudging increment
+      ! Nudge ff using sd data
+      call sd2ff%push(sd%fs%VF  ,loc='c'); call sd2ff%transfer(); call sd2ff%pull(VOFtmp,loc='c')
+      call sd2ff%push(sd%fs%RHOG,loc='c'); call sd2ff%transfer(); call sd2ff%pull(RHOtmp,loc='c')
+      call sd2ff%push(sd%fs%IG  ,loc='c'); call sd2ff%transfer(); call sd2ff%pull(Itmp  ,loc='c')
+      call sd2ff%push(sd%fs%U   ,loc='x'); call sd2ff%transfer(); call sd2ff%pull(Utmp  ,loc='x')
+      call sd2ff%push(sd%fs%V   ,loc='y'); call sd2ff%transfer(); call sd2ff%pull(Vtmp  ,loc='y')
+      call sd2ff%push(sd%fs%W   ,loc='z'); call sd2ff%transfer(); call sd2ff%pull(Wtmp  ,loc='z')
       do k=ff%cfg%kmino_,ff%cfg%kmaxo_; do j=ff%cfg%jmino_,ff%cfg%jmaxo_; do i=ff%cfg%imino_,ff%cfg%imaxo_
-         ! Cell-centered nudging coefficient
-         coeff=strength*sponge_forcing(inner=sd%cfg%pgrid,pos=[ff%cfg%xm(i),ff%cfg%ym(j),ff%cfg%zm(k)],delta=lambda)
-         if (Q(i,j,k,0).gt.0.0_WP) coeff=0.0_WP
-         ! Compute cell-centered momentum increment
-         Q(i,j,k,5)=coeff*(Q(i,j,k,2)*Q(i,j,k,5)-ff%fs%Q(i,j,k,1)*ff%Ui(i,j,k))
-         Q(i,j,k,6)=coeff*(Q(i,j,k,2)*Q(i,j,k,6)-ff%fs%Q(i,j,k,1)*ff%Vi(i,j,k))
-         Q(i,j,k,7)=coeff*(Q(i,j,k,2)*Q(i,j,k,7)-ff%fs%Q(i,j,k,1)*ff%Wi(i,j,k))
-         ! Compute RHO increment
-         Q(i,j,k,1)=0.0_WP
-         Q(i,j,k,2)=coeff*(Q(i,j,k,2)-ff%fs%Q(i,j,k,1))
-         ! Compute RHO*I increment
-         Q(i,j,k,3)=0.0_WP
-         Q(i,j,k,4)=coeff*(Q(i,j,k,4)-ff%fs%Q(i,j,k,2))
+         ! Compute cell-centered nudging coefficient
+         coeffc=strength*sponge_forcing(inner=sd%cfg%pgrid,pos=[ff%cfg%xm(i),ff%cfg%ym(j),ff%cfg%zm(k)],delta=lambda)
+         ! Only nudge in pure gas regions
+         if (VOFtmp(i,j,k).gt.0.0_WP) coeffc=0.0_WP
+         ! Apply nudging on density and internal energy
+         ff%fs%Q(i,j,k,1)=ff%fs%Q(i,j,k,1)+coeffc*(RHOtmp(i,j,k)            -ff%fs%Q(i,j,k,1))
+         ff%fs%Q(i,j,k,2)=ff%fs%Q(i,j,k,2)+coeffc*(RHOtmp(i,j,k)*Itmp(i,j,k)-ff%fs%Q(i,j,k,2))
+         ! Compute face-centered nudging coefficients
+         coeffx=strength*sponge_forcing(inner=sd%cfg%pgrid,pos=[ff%cfg%x (i),ff%cfg%ym(j),ff%cfg%zm(k)],delta=lambda)
+         coeffy=strength*sponge_forcing(inner=sd%cfg%pgrid,pos=[ff%cfg%xm(i),ff%cfg%y (j),ff%cfg%zm(k)],delta=lambda)
+         coeffz=strength*sponge_forcing(inner=sd%cfg%pgrid,pos=[ff%cfg%xm(i),ff%cfg%ym(j),ff%cfg%z (k)],delta=lambda)
+         ! Apply nudging on velocity
+         ff%fs%U(i,j,k)=ff%fs%U(i,j,k)+coeffx*(Utmp(i,j,k)-ff%fs%U(i,j,k))
+         ff%fs%V(i,j,k)=ff%fs%V(i,j,k)+coeffy*(Vtmp(i,j,k)-ff%fs%V(i,j,k))
+         ff%fs%W(i,j,k)=ff%fs%W(i,j,k)+coeffz*(Wtmp(i,j,k)-ff%fs%W(i,j,k))
       end do; end do; end do
       
-      ! Second pass to apply forcing
-      do k=ff%cfg%kmino_+1,ff%cfg%kmaxo_; do j=ff%cfg%jmino_+1,ff%cfg%jmaxo_; do i=ff%cfg%imino_+1,ff%cfg%imaxo_
-         ff%fs%Q(i,j,k,1)=ff%fs%Q(i,j,k,1)+Q(i,j,k,2)
-         ff%fs%Q(i,j,k,2)=ff%fs%Q(i,j,k,2)+Q(i,j,k,4)
-         ff%fs%Q(i,j,k,3)=ff%fs%Q(i,j,k,3)+0.5_WP*sum(Q(i-1:i,j,k,5))
-         ff%fs%Q(i,j,k,4)=ff%fs%Q(i,j,k,4)+0.5_WP*sum(Q(i,j-1:j,k,6))
-         ff%fs%Q(i,j,k,5)=ff%fs%Q(i,j,k,5)+0.5_WP*sum(Q(i,j,k-1:k,7))
-      end do; end do; end do
-      
-      ! Communicate conserved variables
-      do n=1,ff%fs%nQ; call ff%cfg%sync(ff%fs%Q(:,:,:,n)); end do
+      ! Recompute momentum
+      call ff%fs%get_momentum()
       
       ! Recompute primitive variables
       call ff%fs%get_primitive()
       
-      ! Free memory
-      deallocate(Q)
+      ! Free up memory
+      deallocate(VOFtmp,RHOtmp,Itmp,Utmp,Vtmp,Wtmp)
       
    contains
-      !> Function that calculates the signed distance between to domains
+      !> Function that calculates the signed distance between two domains
       real(WP) function sponge_forcing(inner,pos,delta)
          use pgrid_class, only: pgrid
          use mathtools,   only: Pi
@@ -792,60 +933,53 @@ contains
    subroutine couple_ff2sd()
       implicit none
       integer  :: i,j,k,n
-      real(WP) :: coeff,lambda,strength
-      real(WP), dimension(:,:,:,:), allocatable :: Q
+      real(WP) :: coeffc,coeffx,coeffy,coeffz,lambda,strength
+      real(WP), dimension(:,:,:), allocatable :: RHOtmp,RHOItmp,Utmp,Vtmp,Wtmp
       
       ! Sponge parameters
       lambda=5.0_WP*sd%fs%dx
-      strength=0.1_WP
+      strength=0.125_WP
       
       ! Allocate storage for transfered variables
-      allocate(Q(sd%fs%cfg%imino_:sd%fs%cfg%imaxo_,sd%fs%cfg%jmino_:sd%fs%cfg%jmaxo_,sd%fs%cfg%kmino_:sd%fs%cfg%kmaxo_,1:ff%fs%nQ)); Q=0.0_WP
+      allocate(RHOtmp (sd%fs%cfg%imino_:sd%fs%cfg%imaxo_,sd%fs%cfg%jmino_:sd%fs%cfg%jmaxo_,sd%fs%cfg%kmino_:sd%fs%cfg%kmaxo_)); RHOtmp =0.0_WP
+      allocate(RHOItmp(sd%fs%cfg%imino_:sd%fs%cfg%imaxo_,sd%fs%cfg%jmino_:sd%fs%cfg%jmaxo_,sd%fs%cfg%kmino_:sd%fs%cfg%kmaxo_)); RHOItmp=0.0_WP
+      allocate(Utmp   (sd%fs%cfg%imino_:sd%fs%cfg%imaxo_,sd%fs%cfg%jmino_:sd%fs%cfg%jmaxo_,sd%fs%cfg%kmino_:sd%fs%cfg%kmaxo_)); Utmp   =0.0_WP
+      allocate(Vtmp   (sd%fs%cfg%imino_:sd%fs%cfg%imaxo_,sd%fs%cfg%jmino_:sd%fs%cfg%jmaxo_,sd%fs%cfg%kmino_:sd%fs%cfg%kmaxo_)); Vtmp   =0.0_WP
+      allocate(Wtmp   (sd%fs%cfg%imino_:sd%fs%cfg%imaxo_,sd%fs%cfg%jmino_:sd%fs%cfg%jmaxo_,sd%fs%cfg%kmino_:sd%fs%cfg%kmaxo_)); Wtmp   =0.0_WP
       
-      ! Exchange data using coupler
-      do n=1,2
-         call ff2sd%push(ff%fs%Q(:,:,:,n),loc='c'); call ff2sd%transfer(); call ff2sd%pull(Q(:,:,:,n),loc='c')
-      end do
-      call ff2sd%push(ff%Ui,loc='c'); call ff2sd%transfer(); call ff2sd%pull(Q(:,:,:,3),loc='c')
-      call ff2sd%push(ff%Vi,loc='c'); call ff2sd%transfer(); call ff2sd%pull(Q(:,:,:,4),loc='c')
-      call ff2sd%push(ff%Wi,loc='c'); call ff2sd%transfer(); call ff2sd%pull(Q(:,:,:,5),loc='c')
-      
-      ! Compute nudging increment
+      ! Nudge sd using ff data
+      call ff2sd%push(ff%fs%Q(:,:,:,1),loc='c'); call ff2sd%transfer(); call ff2sd%pull(RHOtmp ,loc='c')
+      call ff2sd%push(ff%fs%Q(:,:,:,2),loc='c'); call ff2sd%transfer(); call ff2sd%pull(RHOItmp,loc='c')
+      call ff2sd%push(ff%fs%U         ,loc='x'); call ff2sd%transfer(); call ff2sd%pull(Utmp   ,loc='x')
+      call ff2sd%push(ff%fs%V         ,loc='y'); call ff2sd%transfer(); call ff2sd%pull(Vtmp   ,loc='y')
+      call ff2sd%push(ff%fs%W         ,loc='z'); call ff2sd%transfer(); call ff2sd%pull(Wtmp   ,loc='z')
       do k=sd%cfg%kmino_,sd%cfg%kmaxo_; do j=sd%cfg%jmino_,sd%cfg%jmaxo_; do i=sd%cfg%imino_,sd%cfg%imaxo_
-         ! Cell-centered nudging coefficient
-         coeff=strength*sponge_forcing(inner=sd%cfg%pgrid,pos=[sd%cfg%xm(i),sd%cfg%ym(j),sd%cfg%zm(k)],delta=lambda)
-         ! Compute cell-centered momentum increment
-         Q(i,j,k,3)=coeff*((Q(i,j,k,1)+sd%fs%Q(i,j,k,1))*Q(i,j,k,3)-sum(sd%fs%Q(i,j,k,1:2))*sd%Ui(i,j,k))
-         Q(i,j,k,4)=coeff*((Q(i,j,k,1)+sd%fs%Q(i,j,k,1))*Q(i,j,k,4)-sum(sd%fs%Q(i,j,k,1:2))*sd%Vi(i,j,k))
-         Q(i,j,k,5)=coeff*((Q(i,j,k,1)+sd%fs%Q(i,j,k,1))*Q(i,j,k,5)-sum(sd%fs%Q(i,j,k,1:2))*sd%Wi(i,j,k))
-         ! Compute RHO increment
-         Q(i,j,k,1)=coeff*(Q(i,j,k,1)-sd%fs%Q(i,j,k,2))
-         ! Compute RHO*I increment
-         Q(i,j,k,2)=coeff*(Q(i,j,k,2)-sd%fs%Q(i,j,k,4))
+         ! Compute cell-centered nudging coefficient
+         coeffc=strength*sponge_forcing(inner=sd%cfg%pgrid,pos=[sd%cfg%xm(i),sd%cfg%ym(j),sd%cfg%zm(k)],delta=lambda)
+         ! Apply nudging on gas density and gas internal energy
+         sd%fs%Q(i,j,k,2)=sd%fs%Q(i,j,k,2)+coeffc*((1.0_WP-sd%fs%VF(i,j,k))*RHOtmp (i,j,k)-sd%fs%Q(i,j,k,2))
+         sd%fs%Q(i,j,k,4)=sd%fs%Q(i,j,k,4)+coeffc*((1.0_WP-sd%fs%VF(i,j,k))*RHOItmp(i,j,k)-sd%fs%Q(i,j,k,4))
+         ! Compute face-centered nudging coefficients
+         coeffx=strength*sponge_forcing(inner=sd%cfg%pgrid,pos=[sd%cfg%x (i),sd%cfg%ym(j),sd%cfg%zm(k)],delta=lambda)
+         coeffy=strength*sponge_forcing(inner=sd%cfg%pgrid,pos=[sd%cfg%xm(i),sd%cfg%y (j),sd%cfg%zm(k)],delta=lambda)
+         coeffz=strength*sponge_forcing(inner=sd%cfg%pgrid,pos=[sd%cfg%xm(i),sd%cfg%ym(j),sd%cfg%z (k)],delta=lambda)
+         ! Apply nudging on velocity
+         sd%fs%U(i,j,k)=sd%fs%U(i,j,k)+coeffx*(Utmp(i,j,k)-sd%fs%U(i,j,k))
+         sd%fs%V(i,j,k)=sd%fs%V(i,j,k)+coeffy*(Vtmp(i,j,k)-sd%fs%V(i,j,k))
+         sd%fs%W(i,j,k)=sd%fs%W(i,j,k)+coeffz*(Wtmp(i,j,k)-sd%fs%W(i,j,k))
       end do; end do; end do
       
-      ! Second pass to apply forcing
-      do k=sd%cfg%kmino_+1,sd%cfg%kmaxo_; do j=sd%cfg%jmino_+1,sd%cfg%jmaxo_; do i=sd%cfg%imino_+1,sd%cfg%imaxo_
-         sd%fs%Q(i,j,k,1)=sd%fs%Q(i,j,k,1)
-         sd%fs%Q(i,j,k,2)=sd%fs%Q(i,j,k,2)+Q(i,j,k,1)
-         sd%fs%Q(i,j,k,3)=sd%fs%Q(i,j,k,3)
-         sd%fs%Q(i,j,k,4)=sd%fs%Q(i,j,k,4)+Q(i,j,k,2)
-         sd%fs%Q(i,j,k,5)=sd%fs%Q(i,j,k,5)+0.5_WP*sum(Q(i-1:i,j,k,3))
-         sd%fs%Q(i,j,k,6)=sd%fs%Q(i,j,k,6)+0.5_WP*sum(Q(i,j-1:j,k,4))
-         sd%fs%Q(i,j,k,7)=sd%fs%Q(i,j,k,7)+0.5_WP*sum(Q(i,j,k-1:k,5))
-      end do; end do; end do
-      
-      ! Communicate conserved variables
-      do n=1,sd%fs%nQ; call sd%cfg%sync(sd%fs%Q(:,:,:,n)); end do
+      ! Recompute momentum
+      call sd%fs%get_momentum()
       
       ! Recompute primitive variables
       call sd%fs%get_primitive()
       
-      ! Free memory
-      deallocate(Q)
+      ! Free up memory
+      deallocate(RHOtmp,RHOItmp,Utmp,Vtmp,Wtmp)
       
    contains
-      !> Function that calculates the signed distance between to domains
+      !> Function that calculates the signed distance between two domains
       real(WP) function sponge_forcing(inner,pos,delta)
          use pgrid_class, only: pgrid
          use mathtools,   only: Pi
@@ -856,10 +990,14 @@ contains
          real(WP) :: dx,dy,dz,dx_in,dy_in,dz_in
          logical :: is_out_x,is_out_y,is_out_z
          ! X direction
-         if (inner%nx.gt.1) then ! Only force in -x
-            dx=max(inner%x(inner%imin)-pos(1),0.0_WP)!,pos(1)-inner%x(inner%imax+1))
-            dx_in=pos(1)-inner%x(inner%imin)!min(pos(1)-inner%x(inner%imin),inner%x(inner%imax+1)-pos(1))
-            is_out_x=(pos(1).lt.inner%x(inner%imin))!.or.pos(1).gt.inner%x(inner%imax+1))
+         if (inner%nx.gt.1) then
+            dx=max(inner%x(inner%imin)-pos(1),0.0_WP,pos(1)-inner%x(inner%imax+1))
+            dx_in=min(pos(1)-inner%x(inner%imin),inner%x(inner%imax+1)-pos(1))
+            is_out_x=(pos(1).lt.inner%x(inner%imin).or.pos(1).gt.inner%x(inner%imax+1))
+            ! Only force in -x
+            !dx=max(inner%x(inner%imin)-pos(1),0.0_WP)!,pos(1)-inner%x(inner%imax+1))
+            !dx_in=pos(1)-inner%x(inner%imin)!min(pos(1)-inner%x(inner%imin),inner%x(inner%imax+1)-pos(1))
+            !is_out_x=(pos(1).lt.inner%x(inner%imin))!.or.pos(1).gt.inner%x(inner%imax+1))
          else
             dx=0.0_WP
             dx_in=huge(1.0_WP)
@@ -906,41 +1044,53 @@ contains
    
    !> Transfer drops
    subroutine transfer()
-      use mpi_f08,  only: MPI_ALLREDUCE,MPI_SUM,MPI_IN_PLACE,MPI_MIN,MPI_MAX
-      use parallel, only: MPI_REAL_WP
+      use mpi_f08,   only: MPI_ALLREDUCE,MPI_SUM,MPI_IN_PLACE,MPI_MIN,MPI_MAX
+      use parallel,  only: MPI_REAL_WP,amRoot
+      use mathtools, only: Pi
+      use messager,  only: log
+      use string,    only: str_long
       use irl_fortran_interface, only: setPlane,zeroPolygon
+      use, intrinsic :: iso_fortran_env, only: output_unit
       implicit none
-      integer :: i,j,k,n,m,ierr,nremoved
-      real(WP), dimension(:)  , allocatable :: Vd
-      real(WP), dimension(:)  , allocatable :: Md
-      real(WP), dimension(:,:), allocatable :: Bd
-      real(WP), parameter :: vol_coeff=10.0_WP
+      integer :: i,j,k,n,m,ierr,nremoved,ncreated,np
+      real(WP), dimension(:)  , allocatable :: Vd,Md,Pd
+      real(WP), dimension(:,:), allocatable :: Bd,Ud
+      real(WP), parameter :: vol_coeff=64.0_WP
+      real(WP), parameter :: diameter_threshold=1.0e-2_WP
       real(WP), dimension(3) :: edgelo,edgehi
+      character(len=str_long) :: message
       
       ! Update sd's CCL
       call sd%ccl%build(make_label,same_label)
       
-      ! Allocate volume, mass, and barycenter arrays
+      ! Allocate volume, mass, pressure, barycenter, and velocity arrays
       allocate(Vd(    1:sd%ccl%nstruct)); Vd=0.0_WP
       allocate(Md(    1:sd%ccl%nstruct)); Md=0.0_WP
+      allocate(Pd(    1:sd%ccl%nstruct)); Pd=0.0_WP
       allocate(Bd(1:3,1:sd%ccl%nstruct)); Bd=0.0_WP
+      allocate(Ud(1:3,1:sd%ccl%nstruct)); Ud=0.0_WP
       
-      ! Loop over individual structures
+      ! Loop over individual structures and compute structure properties
       do n=1,sd%ccl%nstruct
          ! Loop over cells in structure and accumulate data
          do m=1,sd%ccl%struct(n)%n_
             ! Get cell index
             i=sd%ccl%struct(n)%map(1,m); j=sd%ccl%struct(n)%map(2,m); k=sd%ccl%struct(n)%map(3,m)
-            ! Increment volume, mass, and barycenter
+            ! Increment volume, mass, pressure, barycenter, and momentum
             Vd  (n)=Vd  (n)+sd%fs%cfg%vol(i,j,k)*sd%fs%VF(i,j,k)
             Md  (n)=Md  (n)+sd%fs%cfg%vol(i,j,k)*sd%fs%Q (i,j,k,1)
+            Pd  (n)=Pd  (n)+sd%fs%cfg%vol(i,j,k)*sd%fs%VF(i,j,k)*sd%fs%PL(i,j,k)
             Bd(:,n)=Bd(:,n)+sd%fs%cfg%vol(i,j,k)*sd%fs%Q (i,j,k,1)*sd%fs%BL(:,i,j,k)
+            Ud(1,n)=Ud(1,n)+sd%fs%cfg%vol(i,j,k)*sd%fs%VF(i,j,k)*sd%Ui(i,j,k)
+            Ud(2,n)=Ud(2,n)+sd%fs%cfg%vol(i,j,k)*sd%fs%VF(i,j,k)*sd%Vi(i,j,k)
+            Ud(3,n)=Ud(3,n)+sd%fs%cfg%vol(i,j,k)*sd%fs%VF(i,j,k)*sd%Wi(i,j,k)
          end do
       end do
       call MPI_ALLREDUCE(MPI_IN_PLACE,Vd,  sd%ccl%nstruct,MPI_REAL_WP,MPI_SUM,sd%fs%cfg%comm,ierr)
       call MPI_ALLREDUCE(MPI_IN_PLACE,Md,  sd%ccl%nstruct,MPI_REAL_WP,MPI_SUM,sd%fs%cfg%comm,ierr)
-      call MPI_ALLREDUCE(MPI_IN_PLACE,Bd,3*sd%ccl%nstruct,MPI_REAL_WP,MPI_SUM,sd%fs%cfg%comm,ierr)
-      do n=1,sd%ccl%nstruct; Bd(:,n)=Bd(:,n)/Md(n); end do
+      call MPI_ALLREDUCE(MPI_IN_PLACE,Pd,  sd%ccl%nstruct,MPI_REAL_WP,MPI_SUM,sd%fs%cfg%comm,ierr); Pd=Pd/Vd
+      call MPI_ALLREDUCE(MPI_IN_PLACE,Bd,3*sd%ccl%nstruct,MPI_REAL_WP,MPI_SUM,sd%fs%cfg%comm,ierr); do n=1,sd%ccl%nstruct; Bd(:,n)=Bd(:,n)/Md(n); end do
+      call MPI_ALLREDUCE(MPI_IN_PLACE,Ud,3*sd%ccl%nstruct,MPI_REAL_WP,MPI_SUM,sd%fs%cfg%comm,ierr); do n=1,sd%ccl%nstruct; Ud(:,n)=Ud(:,n)/Vd(n); end do
       
       ! Loop again to calculate extent of large enough drops - will be used for remeshing
       Lmin=[+huge(1.0_WP),+huge(1.0_WP),+huge(1.0_WP)]; Lmax=[-huge(1.0_WP),-huge(1.0_WP),-huge(1.0_WP)]
@@ -964,19 +1114,19 @@ contains
       edgehi=[sd%fs%cfg%x(sd%fs%cfg%imax+1),sd%fs%cfg%y(sd%fs%cfg%jmax+1),sd%fs%cfg%z(sd%fs%cfg%kmax+1)]
       ! If we're about to remesh sd, use extent of new sd domain
       if (remesh_evt%occurs()) then
-         edgelo(1)=sd%fs%dx*floor  ((Lmin(1)-0.5_WP)/sd%fs%dx); if (sd%cfg%nx.eq.1) edgelo(1)=Lmin(1)
-         edgelo(2)=sd%fs%dx*floor  ((Lmin(2)-0.5_WP)/sd%fs%dx); if (sd%cfg%ny.eq.1) edgelo(2)=Lmin(2)
-         edgelo(3)=sd%fs%dx*floor  ((Lmin(3)-0.5_WP)/sd%fs%dx); if (sd%cfg%nz.eq.1) edgelo(3)=Lmin(3)
-         edgehi(1)=sd%fs%dx*ceiling((Lmax(1)+0.5_WP)/sd%fs%dx); if (sd%cfg%nx.eq.1) edgehi(1)=Lmax(1)
-         edgehi(2)=sd%fs%dx*ceiling((Lmax(2)+0.5_WP)/sd%fs%dx); if (sd%cfg%ny.eq.1) edgehi(2)=Lmax(2)
-         edgehi(3)=sd%fs%dx*ceiling((Lmax(3)+0.5_WP)/sd%fs%dx); if (sd%cfg%nz.eq.1) edgehi(3)=Lmax(3)
+         edgelo(1)=sd%fs%dx*floor  ((Lmin(1)-Lmargin)/sd%fs%dx); if (sd%cfg%nx.eq.1) edgelo(1)=Lmin(1)
+         edgelo(2)=sd%fs%dx*floor  ((Lmin(2)-Lmargin)/sd%fs%dx); if (sd%cfg%ny.eq.1) edgelo(2)=Lmin(2)
+         edgelo(3)=sd%fs%dx*floor  ((Lmin(3)-Lmargin)/sd%fs%dx); if (sd%cfg%nz.eq.1) edgelo(3)=Lmin(3)
+         edgehi(1)=sd%fs%dx*ceiling((Lmax(1)+Lmargin)/sd%fs%dx); if (sd%cfg%nx.eq.1) edgehi(1)=Lmax(1)
+         edgehi(2)=sd%fs%dx*ceiling((Lmax(2)+Lmargin)/sd%fs%dx); if (sd%cfg%ny.eq.1) edgehi(2)=Lmax(2)
+         edgehi(3)=sd%fs%dx*ceiling((Lmax(3)+Lmargin)/sd%fs%dx); if (sd%cfg%nz.eq.1) edgehi(3)=Lmax(3)
       end if
       ! Add a buffer of 10 cells
       edgelo=edgelo+10.0_WP*sd%fs%dx
       edgehi=edgehi-10.0_WP*sd%fs%dx
       
       ! Now traverse all structures again to perform transfer
-      nremoved=0
+      nremoved=0; ncreated=0
       do n=1,sd%ccl%nstruct
          ! Check if volume is small enough for transfer
          if (Vd(n).gt.vol_coeff*sd%fs%vol) cycle
@@ -985,7 +1135,37 @@ contains
             ! Increment counter
             nremoved=nremoved+1
             ! Perform transfer
-            !
+            if (ff%cfg%amRoot) then
+               ! Make room for new drop
+               np=ff%lp%np_+1; call ff%lp%resize(np)
+               ! Give the drop an id
+               ff%lp%p(np)%id  =int(1,8)
+               ! Assign equivalent diameter from the volume
+               ff%lp%p(np)%d   =(6.0_WP*Vd(n)/Pi)**(1.0_WP/3.0_WP)
+               ! Assign droplet temperature from mass and EOS
+               ff%lp%p(np)%T   =get_TL(RHO=Md(n)/Vd(n),P=Pd(n))
+               ! Place the drop at the liquid barycenter
+               ff%lp%p(np)%pos =Bd(:,n)
+               ! Assign mean structure velocity as drop velocity
+               ff%lp%p(np)%vel =Ud(:,n)
+               ! Give zero angular velocity
+               ff%lp%p(np)%angVel=0.0_WP
+               ! Give zero collision force
+               ff%lp%p(np)%Acol=0.0_WP
+               ff%lp%p(np)%Tcol=0.0_WP
+               ! Let the drop find it own integration time
+               ff%lp%p(np)%dt  =0.0_WP
+               ! Localize the drop on the ff mesh
+               ff%lp%p(np)%ind =ff%lp%cfg%get_ijk_global(ff%lp%p(np)%pos,[ff%lp%cfg%imin,ff%lp%cfg%jmin,ff%lp%cfg%kmin])
+               ! Activate it if it is large enough
+               ff%lp%p(np)%flag=1
+               if (ff%lp%p(np)%d.gt.diameter_threshold*ff%fs%dx) then
+                  ff%lp%p(np)%flag=0
+                  ncreated=ncreated+1
+               end if
+               ! Increment particle counter
+               ff%lp%np_=np
+            end if
             ! Remove drop from VOF representation
             do m=1,sd%ccl%struct(n)%n_
                ! Get cell index
@@ -1013,6 +1193,8 @@ contains
             end do
          end if
       end do
+      ! Resync the spray
+      call ff%lp%sync()
       ! Communicate conserved variables and volume moments
       call sd%fs%cfg%sync(sd%fs%Q(:,:,:,1))
       call sd%fs%cfg%sync(sd%fs%Q(:,:,:,2))
@@ -1025,10 +1207,17 @@ contains
       call sd%fs%get_momentum()
       ! Rebuild primitive variables
       call sd%fs%get_primitive()
-      ! Output
-      if (nremoved.gt.0.and.sd%cfg%amRoot) print*,'=============================> Removed ',nremoved,'droplets!'
+      
       ! Deallocate memory
-      deallocate(Vd,Md,Bd)
+      deallocate(Vd,Md,Pd,Bd,Ud)
+      
+      ! Some messaging
+      if (amRoot.and.nremoved.gt.0) then
+         write(message,'(">> Transfered ",i0," structures from shockdrop, created ",i0," particles in farfield")') nremoved,ncreated 
+         call log(trim(message))
+         write(output_unit,*) trim(message)
+      end if
+      
    contains
       !> Function that identifies cells that need a label
       logical function make_label(i1,j1,k1)
@@ -1038,9 +1227,25 @@ contains
       end function make_label
       !> Function that identifies if cell pairs have same label
       logical function same_label(i1,j1,k1,i2,j2,k2)
+         use irl_fortran_interface, only: calculateNormal,calculateCentroid
          implicit none
-         integer, intent(in) :: i1,j1,k1,i2,j2,k2
+         integer , intent(in) :: i1,j1,k1,i2,j2,k2
+         real(WP), dimension(3) :: N1,N2,O1,O2
+         ! Big default, assume same label
          same_label=.true.
+         ! Look more closely at the local polygon alignment to decide whether to use same labels
+         if (sd%fs%VF(i1,j1,k1).gt.0.0_WP.and.sd%fs%VF(i1,j1,k1).lt.1.0_WP.and.sd%fs%VF(i2,j2,k2).gt.0.0_WP.and.sd%fs%VF(i2,j2,k2).lt.1.0_WP) then
+            ! Get polygon normals
+            N1=calculateNormal(sd%fs%interface_polygon(i1,j1,k1))
+            N2=calculateNormal(sd%fs%interface_polygon(i2,j2,k2))
+            ! If not at least ~75 degrees, return
+            if (dot_product(N1,N2).ge.0.3_WP) return
+            ! Get polygon barycenters
+            O1=calculateCentroid(sd%fs%interface_polygon(i1,j1,k1))
+            O2=calculateCentroid(sd%fs%interface_polygon(i2,j2,k2))
+            ! If pointing towards one another, use different labels
+            if (dot_product(O1-O2,N1).lt.0.0_WP.and.dot_product(O2-O1,N2).lt.0.0_WP) same_label=.false.
+         end if
       end function same_label
       !> Function that test closeness of a point X0 to edge of sd domain
       logical function close_to_edge(X0)
@@ -1084,6 +1289,13 @@ contains
       call ff%finalize()
       call ens_evt%finalize()
       call remesh_evt%finalize()
+      call timefile%finalize()
+      call tstep%finalize()
+      call tsd%finalize()
+      call tff%finalize()
+      call tcpl%finalize()
+      call tmesh%finalize()
+      call ttrans%finalize()
    end subroutine simulation_final
    
    
