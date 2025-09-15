@@ -151,9 +151,9 @@ contains
                   do n=1,nt
 
                      ! If all vertices of triangle > mydist+eps, no need to project
-                     if (sum((c - t(n)%v1)**2) .gt. (mydist+eps)**2 .and.     &
-                         sum((c - t(n)%v2)**2) .gt. (mydist+eps)**2 .and.     &
-                         sum((c - t(n)%v3)**2) .gt. (mydist+eps)**2) cycle
+                     !if (sum((c - t(n)%v1)**2) .gt. (mydist+eps)**2 .and.     &
+                     !    sum((c - t(n)%v2)**2) .gt. (mydist+eps)**2 .and.     &
+                     !    sum((c - t(n)%v3)**2) .gt. (mydist+eps)**2) cycle
 
                      ! Normalize triangle normal
                      tmp=sqrt(dot_product(t(n)%norm,t(n)%norm))
