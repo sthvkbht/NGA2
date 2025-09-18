@@ -398,9 +398,9 @@ module simulation
         u2=abs(u2-u1); M2=u2/sqrt(Gamma*p2/rho2); u1=0.0_WP; M1=u1/sqrt(Gamma*p1/rho1)
         ! Set heat capacities corresponding to a normalized pre-shock
         Cv=(p1+Pinf)/(rho1*(Gamma-1.0_WP))
-        ! Get reference temperature
-        T0=get_T(rho1,p1)
-        ! Viscous parameters
+        ! Get reference temperature based on post-shock conditions
+        T0=get_T(rho2,p2)
+        ! Define viscosity based on post-shock Reynolds number
         call param_read('Reynolds number',Re); visc0=rho2*2.0_WP*Rcyl*u2/Re
         ! Output case info
         if (cfg%amRoot) then
