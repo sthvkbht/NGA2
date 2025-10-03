@@ -42,7 +42,7 @@ module gp_class
      type(ghost), dimension(:), allocatable :: gpx       !< Array of ghost points at X-face
      type(ghost), dimension(:), allocatable :: gpy       !< Array of ghost points at Y-face
      type(ghost), dimension(:), allocatable :: gpz       !< Array of ghost points at Z-face
-     integer, dimension(:,:,:), allocatable :: label     !< Integer array used for labeling ghost/image points
+     real(WP), dimension(:,:,:), allocatable :: label    !< Integer array used for labeling ghost/image points
 
    contains
 
@@ -82,7 +82,7 @@ contains
     if (allocated(self%gpz)) deallocate(self%gpz)
 
     ! Allocate label array (0=fluid cell, +1=ghost point, -1=image point)
-    allocate(self%label(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%label=0
+    allocate(self%label(self%cfg%imino_:self%cfg%imaxo_,self%cfg%jmino_:self%cfg%jmaxo_,self%cfg%kmino_:self%cfg%kmaxo_)); self%label=0.0_WP
 
   end function constructor
 
@@ -266,7 +266,7 @@ contains
                    end if
                    ! Store image point data
                    this%gp(n)%im%pos=pos_im
-                   this%gp(n)%im%ind(1)=i1; this%gp(n)%im%ind(2)=j1; this%gp(n)%im%ind(3)=k1
+                   this%gp(n)%im%ind(1)=this%cfg%imin; this%gp(n)%im%ind(2)=this%cfg%jmin; this%gp(n)%im%ind(3)=this%cfg%kmin
                    this%gp(n)%im%ind=this%cfg%get_ijk_global(this%gp(n)%im%pos,this%gp(n)%im%ind)
                    this%gp(n)%im%st(1,1)=i1; this%gp(n)%im%st(1,2)=i2
                    this%gp(n)%im%st(2,1)=j1; this%gp(n)%im%st(2,2)=j2
@@ -281,13 +281,14 @@ contains
     end do
 
     ! Update label array
-    this%label=0
+    this%label=0.0_WP
     do n=1,this%ngp
        i=this%gp(n)%ind(1); j=this%gp(n)%ind(2); k=this%gp(n)%ind(3)
-       this%label(i,j,k)=+1 !< Ghost point
+       this%label(i,j,k)=+1.0_WP !< Ghost point
        i=this%gp(n)%im%ind(1); j=this%gp(n)%im%ind(2); k=this%gp(n)%im%ind(3)
-       this%label(i,j,k)=-1 !< Image points
+       this%label(i,j,k)=-1.0_WP !< Image points
     end do
+    call this%cfg%syncsum(this%label)
 
     ! X-face
     !========================================================================================
@@ -665,12 +666,15 @@ contains
     ! Log/screen output
     logging: block
       use, intrinsic :: iso_fortran_env, only: output_unit
+      use mpi_f08, only : MPI_SUM,MPI_INTEGER
       use param,    only: verbose
       use messager, only: log
       use string,   only: str_long
+      integer :: n,ierr
       character(len=str_long) :: message
+      call MPI_ALLREDUCE(this%ngp,n,1,MPI_INTEGER,MPI_SUM,this%cfg%comm,ierr)
       if (this%cfg%amRoot) then
-         write(message,'("Ghost point solver on partitioned grid [",a,"]: ",i0," ghost points found")') trim(this%cfg%name),this%ngp
+         write(message,'("Ghost point solver on partitioned grid [",a,"]: ",i0," ghost points found")') trim(this%cfg%name),n
          if (verbose.gt.1) write(output_unit,'(a)') trim(message)
          if (verbose.gt.0) call log(message)
       end if
