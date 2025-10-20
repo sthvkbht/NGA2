@@ -267,7 +267,7 @@ module simulation
            ! Interior state just inside boundary (cell centered)
            rho_int=fs%Q(fs%cfg%imin,j,k,1)
            p_int=fs%P(fs%cfg%imin,j,k)
-           u_int=fs%U(fs%cfg%imin,j,k)
+           u_int=0.5_WP*(fs%U(fs%cfg%imin,j,k)+fs%U(fs%cfg%imin+1,j,k))
            c_int=sqrt(Gamma*p_int/rho_int)
            M_int=abs(u_int)/c_int
            if (u_int.ge.0.0_WP) then
