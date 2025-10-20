@@ -333,7 +333,7 @@ module simulation
            ! Interior state just inside boundary (cell centered)
            rho_int=fs%Q(fs%cfg%imax,j,k,1)
            p_int=fs%P(fs%cfg%imax,j,k)
-           u_int=fs%U(fs%cfg%imax,j,k)
+           u_int=0.5_WP*(3.0_WP*fs%U(fs%cfg%imax,j,k)-fs%U(fs%cfg%imax-1,j,k))
            c_int=sqrt(Gamma*p_int/rho_int)
            if(abs(u_int)/c_int.lt.1.0_WP) then
               ! Riemann invariants
