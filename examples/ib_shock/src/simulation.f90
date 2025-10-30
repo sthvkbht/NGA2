@@ -120,6 +120,8 @@ module simulation
      call fs%get_vreman   (dt=time%dt,visc=visc_t); fs%VISC=fs%Q(:,:,:,1)*visc_t+visc
      ! Recompute thermal conductivity
      fs%diff=Gamma*Cv*fs%visc/Prandtl
+     ! Add LAD
+     this%fs%VISC=this%fs%VISC+0.002_WP*this%fs%BETA
    end subroutine prepare_viscosities
 
 
