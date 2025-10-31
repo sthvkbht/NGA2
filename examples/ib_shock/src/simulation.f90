@@ -121,7 +121,7 @@ module simulation
      ! Recompute thermal conductivity
      fs%diff=Gamma*Cv*fs%visc/Prandtl
      ! Add LAD
-     this%fs%VISC=this%fs%VISC+0.002_WP*this%fs%BETA
+     fs%VISC=fs%VISC+0.002_WP*fs%BETA
    end subroutine prepare_viscosities
 
 
