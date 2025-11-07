@@ -225,18 +225,18 @@ module simulation
      ! Recompute primitive variables
      call fs%get_primitive()
      ! Reset interior points
-     do k=cfg%kmino_,cfg%kmaxo_
-        do j=cfg%jmino_,cfg%jmaxo_
-           do i=cfg%imino_,cfg%imaxo_
+     do k=cfg%kmin_,cfg%kmax_
+        do j=cfg%jmin_,cfg%jmax_
+           do i=cfg%imin_,cfg%imax_
               if (cfg%Gib(i,j,k).lt.0.0_WP) then
-                 fs%U(i,j,k)  =u1
-                 fs%V(i,j,k)  =0.0_WP
-                 fs%W(i,j,k)  =0.0_WP
                  fs%Q(i,j,k,1)=rho1
                  fs%P(i,j,k)  =p1
                  fs%I(i,j,k)  =get_I(rho1,p1)
                  fs%Q(i,j,k,2)=rho1*fs%I(i,j,k)
               end if
+              if (0.5_WP*(cfg%Gib(i-1,j,k)+cfg%Gib(i,j,k)).lt.0.0_WP) fs%U(i,j,k)=u1
+              if (0.5_WP*(cfg%Gib(i,j-1,k)+cfg%Gib(i,j,k)).lt.0.0_WP) fs%V(i,j,k)=0.0_WP
+              if (0.5_WP*(cfg%Gib(i,j,k-1)+cfg%Gib(i,j,k)).lt.0.0_WP) fs%W(i,j,k)=0.0_WP
            end do
         end do
      end do
@@ -253,6 +253,14 @@ module simulation
         fs%I(i,j,k)=get_I(fs%Q(i,j,k,1),fs%P(i,j,k))
         fs%Q(i,j,k,2)=fs%Q(i,j,k,1)*fs%I(i,j,k)
      end do
+     ! Communicate
+     call fs%cfg%sync(fs%U)
+     call fs%cfg%sync(fs%V)
+     call fs%cfg%sync(fs%W)
+     call fs%cfg%sync(fs%P)
+     call fs%cfg%sync(fs%I)
+     call fs%cfg%sync( fs%Q(:,:,:,1))
+     call fs%cfg%sync( fs%Q(:,:,:,2))
      call fs%get_momentum()
    end subroutine apply_ibm
 
