@@ -35,6 +35,7 @@ module lss_class
       real(WP), dimension(3) :: pos          !< Particle center coordinates
       real(WP), dimension(3) :: vel          !< Velocity of particle
       real(WP), dimension(3) :: Abond        !< Bond acceleration for particle
+      real(WP), dimension(3) :: norm         !< Outward normal vector
       !> MPI_INTEGER data
       integer :: id                          !< ID the object is associated with
       integer :: i                           !< Unique index of particle (assumed >0)
@@ -45,7 +46,7 @@ module lss_class
    end type part
    !> Number of blocks, block length, and block types in a particle
    integer, parameter                         :: part_nblock=2
-   integer           , dimension(part_nblock) :: part_lblock=[11+max_bond,7+max_bond]
+   integer           , dimension(part_nblock) :: part_lblock=[14+max_bond,7+max_bond]
    type(MPI_Datatype), dimension(part_nblock) :: part_tblock=[MPI_DOUBLE_PRECISION,MPI_INTEGER]
    !> MPI_PART derived datatype and size
    type(MPI_Datatype) :: MPI_PART
@@ -107,6 +108,7 @@ module lss_class
       procedure :: bond_init                         !< Setup initial interparticle bonds
       procedure :: get_bond_force                    !< Compute interparticle bond force
       procedure :: substep_rk4                       !< RK4 integration of particle ODEs
+      procedure :: get_source                        !< Compute IBM source terms
       procedure :: get_cfl                           !< Calculate maximum CFL
       procedure :: get_max                           !< Extract various monitoring data
       procedure :: update_partmesh                   !< Update a partmesh object using current particles
@@ -511,26 +513,30 @@ contains
     
 
    !> Advance the particle equations in a stage of RK4
-   subroutine substep_rk4(this,stage,dt,U,V,W,rho,srcRHO,srcI,srcU,srcV,srcW)
+   subroutine substep_rk4(this,stage,dt,Gamma,Pinf,U,V,W,P,RHO,srcRHO,srcI,srcU,srcV,srcW)
       use mpi_f08,   only: MPI_ALLREDUCE,MPI_SUM,MPI_MAX,MPI_INTEGER,MPI_IN_PLACE
       use parallel,  only: MPI_REAL_WP
       use mathtools, only: Pi
       implicit none
       class(lss), intent(inout) :: this
-      integer, intent(in) :: stage   !< RK stage
-      real(WP), intent(inout) :: dt  !< Timestep size over which to advance
+      integer, intent(in) :: stage     !< RK stage
+      real(WP), intent(inout) :: dt    !< Timestep size over which to advance
+      real(WP), intent(inout) :: Gamma !< Adiabatic index
+      real(WP), intent(inout) :: Pinf  !< Reference pressure
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: U         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: V         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: W         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: rho       !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: P         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: RHO       !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcRHO !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcI   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcU   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcV   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcW   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       integer :: i,j,k,ierr
-      real(WP) :: dti,rho_
-      real(WP), dimension(3) :: vel,src,dxdt,dudt
+      real(WP) :: dti,rho_,srcRHO_,srcI_
+      integer, dimension(3) :: ind_gp
+      real(WP), dimension(3) :: vel,acc,srcvel_,dxdt,dudt,pos_gp
       real(WP), parameter :: oneHalf=1.0_WP/2.0_WP
       real(WP), parameter :: oneThird=1.0_WP/3.0_WP
       real(WP), parameter :: oneSixth=1.0_WP/6.0_WP
@@ -562,21 +568,21 @@ contains
          ! Take a substep
          do i=1,this%np_
             if (this%p(i)%id.eq.0) cycle
-            ! Interpolate fluid quantities to the particle location
-            vel=0.0_WP
-            if (this%cfg%nx.gt.1) vel(1)=this%interpolate(A=U,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='U')
-            if (this%cfg%ny.gt.1) vel(2)=this%interpolate(A=V,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='V')
-            if (this%cfg%nz.gt.1) vel(3)=this%interpolate(A=W,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='W')
-            rho_=this%interpolate(A=rho,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='SC')
-            ! Compute the source term
-            src=rho_*(this%p(i)%vel-vel)*dti*this%dV
-            ! Send source term back to the mesh
-            if (this%cfg%nx.gt.1) call this%extrapolate(Ap=src(1),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcU,dir='U')
-            if (this%cfg%ny.gt.1) call this%extrapolate(Ap=src(2),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcV,dir='V')
-            if (this%cfg%nz.gt.1) call this%extrapolate(Ap=src(3),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcW,dir='W')
+            acc=0.0_WP
+            call this%get_source(dti=dti,Gamma=Gamma,Pinf=Pinf,U=U,V=V,W=W,P=P,RHO=RHO,pi=this%p(i),pos_gp=pos_gp,ind_gp=ind_gp,srcRHO=srcRHO_,srcI=srcI_,srcvel=srcvel_)
+            ! Send momentum source terms back to the mesh using particle coordinate
+            if (this%cfg%nx.gt.1) call this%extrapolate(Ap=srcvel_(1),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcU,dir='U')
+            if (this%cfg%ny.gt.1) call this%extrapolate(Ap=srcvel_(2),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcV,dir='V')
+            if (this%cfg%nz.gt.1) call this%extrapolate(Ap=srcvel_(3),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcW,dir='W')
+            ! Send density/energy source terms back to the mesh using ghost point coordinate
+            if (this%p(i)%flag.eq.2) then
+               call this%extrapolate(Ap=srcRHO_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcRHO,dir='SC')
+               call this%extrapolate(Ap=srcI_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcI,dir='SC')
+            end if
             ! Get right-hand side terms
+            acc=-srcvel_/(this%rho*this%dV)
             dxdt=this%p(i)%vel
-            dudt=this%gravity+this%p(i)%Abond-src/(this%rho*this%dV)            
+            dudt=this%gravity+this%p(i)%Abond+acc           
             ! Update particle position
             this%pbuf(i)%pos = this%pold(i)%pos + dt*dxdt*oneSixth
             this%p(i)%pos    = this%pold(i)%pos + dt*dxdt*oneHalf
@@ -599,21 +605,21 @@ contains
          ! Second RK step ====================================================================================
          do i=1,this%np_
             if (this%p(i)%id.eq.0) cycle
-            ! Interpolate fluid quantities to the particle location
-            vel=0.0_WP
-            if (this%cfg%nx.gt.1) vel(1)=this%interpolate(A=U,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='U')
-            if (this%cfg%ny.gt.1) vel(2)=this%interpolate(A=V,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='V')
-            if (this%cfg%nz.gt.1) vel(3)=this%interpolate(A=W,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='W')
-            rho_=this%interpolate(A=rho,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='SC')
-            ! Compute the source term
-            src=rho_*(this%p(i)%vel-vel)*dti*this%dV
-            ! Send source term back to the mesh
-            if (this%cfg%nx.gt.1) call this%extrapolate(Ap=src(1),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcU,dir='U')
-            if (this%cfg%ny.gt.1) call this%extrapolate(Ap=src(2),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcV,dir='V')
-            if (this%cfg%nz.gt.1) call this%extrapolate(Ap=src(3),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcW,dir='W')
+            acc=0.0_WP
+            call this%get_source(dti=dti,Gamma=Gamma,Pinf=Pinf,U=U,V=V,W=W,P=P,RHO=RHO,pi=this%p(i),pos_gp=pos_gp,ind_gp=ind_gp,srcRHO=srcRHO_,srcI=srcI_,srcvel=srcvel_)
+            ! Send momentum source terms back to the mesh using particle coordinate
+            if (this%cfg%nx.gt.1) call this%extrapolate(Ap=srcvel_(1),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcU,dir='U')
+            if (this%cfg%ny.gt.1) call this%extrapolate(Ap=srcvel_(2),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcV,dir='V')
+            if (this%cfg%nz.gt.1) call this%extrapolate(Ap=srcvel_(3),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcW,dir='W')
+            ! Send density/energy source terms back to the mesh using ghost point coordinate
+            if (this%p(i)%flag.eq.2) then
+               call this%extrapolate(Ap=srcRHO_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcRHO,dir='SC')
+               call this%extrapolate(Ap=srcI_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcI,dir='SC')
+            end if
             ! Get right-hand side terms
+            acc=-srcvel_/(this%rho*this%dV)
             dxdt=this%p(i)%vel
-            dudt=this%gravity+this%p(i)%Abond-src/(this%rho*this%dV) 
+            dudt=this%gravity+this%p(i)%Abond+acc 
             ! Update particle position
             this%pbuf(i)%pos = this%pbuf(i)%pos + dt*dxdt*oneThird
             this%p(i)%pos    = this%pold(i)%pos + dt*dxdt*oneHalf
@@ -636,21 +642,21 @@ contains
           ! Third RK step ====================================================================================
          do i=1,this%np_
             if (this%p(i)%id.eq.0) cycle
-            ! Interpolate fluid quantities to the particle location
-            vel=0.0_WP
-            if (this%cfg%nx.gt.1) vel(1)=this%interpolate(A=U,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='U')
-            if (this%cfg%ny.gt.1) vel(2)=this%interpolate(A=V,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='V')
-            if (this%cfg%nz.gt.1) vel(3)=this%interpolate(A=W,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='W')
-            rho_=this%interpolate(A=rho,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='SC')
-            ! Compute the source term
-            src=rho_*(this%p(i)%vel-vel)*dti*this%dV
-            ! Send source term back to the mesh
-            if (this%cfg%nx.gt.1) call this%extrapolate(Ap=src(1),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcU,dir='U')
-            if (this%cfg%ny.gt.1) call this%extrapolate(Ap=src(2),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcV,dir='V')
-            if (this%cfg%nz.gt.1) call this%extrapolate(Ap=src(3),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcW,dir='W')
+            acc=0.0_WP
+            call this%get_source(dti=dti,Gamma=Gamma,Pinf=Pinf,U=U,V=V,W=W,P=P,RHO=RHO,pi=this%p(i),pos_gp=pos_gp,ind_gp=ind_gp,srcRHO=srcRHO_,srcI=srcI_,srcvel=srcvel_)
+            ! Send momentum source terms back to the mesh using particle coordinate
+            if (this%cfg%nx.gt.1) call this%extrapolate(Ap=srcvel_(1),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcU,dir='U')
+            if (this%cfg%ny.gt.1) call this%extrapolate(Ap=srcvel_(2),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcV,dir='V')
+            if (this%cfg%nz.gt.1) call this%extrapolate(Ap=srcvel_(3),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcW,dir='W')
+            ! Send density/energy source terms back to the mesh using ghost point coordinate
+            if (this%p(i)%flag.eq.2) then
+               call this%extrapolate(Ap=srcRHO_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcRHO,dir='SC')
+               call this%extrapolate(Ap=srcI_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcI,dir='SC')
+            end if
             ! Get right-hand side terms
+            acc=-srcvel_/(this%rho*this%dV)
             dxdt=this%p(i)%vel
-            dudt=this%gravity+this%p(i)%Abond-src/(this%rho*this%dV) 
+            dudt=this%gravity+this%p(i)%Abond+acc
             ! Update particle position
             this%pbuf(i)%pos = this%pbuf(i)%pos + dt*dxdt*oneThird
             this%p(i)%pos    = this%pold(i)%pos + dt*dxdt
@@ -673,21 +679,21 @@ contains
          ! Fourth RK step ====================================================================================
          do i=1,this%np_
             if (this%p(i)%id.eq.0) cycle
-            ! Interpolate fluid quantities to the particle location
-            vel=0.0_WP
-            if (this%cfg%nx.gt.1) vel(1)=this%interpolate(A=U,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='U')
-            if (this%cfg%ny.gt.1) vel(2)=this%interpolate(A=V,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='V')
-            if (this%cfg%nz.gt.1) vel(3)=this%interpolate(A=W,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='W')
-            rho_=this%interpolate(A=rho,xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),dir='SC')
-            ! Compute the source term
-            src=rho_*(this%p(i)%vel-vel)*dti*this%dV
-            ! Send source term back to the mesh
-            if (this%cfg%nx.gt.1) call this%extrapolate(Ap=src(1),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcU,dir='U')
-            if (this%cfg%ny.gt.1) call this%extrapolate(Ap=src(2),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcV,dir='V')
-            if (this%cfg%nz.gt.1) call this%extrapolate(Ap=src(3),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcW,dir='W')
+           acc=0.0_WP
+            call this%get_source(dti=dti,Gamma=Gamma,Pinf=Pinf,U=U,V=V,W=W,P=P,RHO=RHO,pi=this%p(i),pos_gp=pos_gp,ind_gp=ind_gp,srcRHO=srcRHO_,srcI=srcI_,srcvel=srcvel_)
+            ! Send momentum source terms back to the mesh using particle coordinate
+            if (this%cfg%nx.gt.1) call this%extrapolate(Ap=srcvel_(1),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcU,dir='U')
+            if (this%cfg%ny.gt.1) call this%extrapolate(Ap=srcvel_(2),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcV,dir='V')
+            if (this%cfg%nz.gt.1) call this%extrapolate(Ap=srcvel_(3),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcW,dir='W')
+            ! Send density/energy source terms back to the mesh using ghost point coordinate
+            if (this%p(i)%flag.eq.2) then
+               call this%extrapolate(Ap=srcRHO_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcRHO,dir='SC')
+               call this%extrapolate(Ap=srcI_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcI,dir='SC')
+            end if
             ! Get right-hand side terms
+            acc=-srcvel_/(this%rho*this%dV)
             dxdt=this%p(i)%vel
-            dudt=this%gravity+this%p(i)%Abond-src/(this%rho*this%dV) 
+            dudt=this%gravity+this%p(i)%Abond+acc 
             ! Update particle position
             this%p(i)%pos    = this%pbuf(i)%pos + dt*dxdt*oneSixth
             ! Update particle velocity
@@ -717,6 +723,8 @@ contains
       end select
       
       ! Sum at boundaries
+      call this%cfg%syncsum(srcRHO)
+      call this%cfg%syncsum(srcI)
       call this%cfg%syncsum(srcU)
       call this%cfg%syncsum(srcV)
       call this%cfg%syncsum(srcW)
@@ -741,11 +749,59 @@ contains
    end subroutine substep_rk4
 
 
+   !> Compute direct forcing source by a specified time step dt
+   subroutine get_source(this,dti,Gamma,Pinf,U,V,W,P,RHO,pi,pos_gp,ind_gp,srcRHO,srcI,srcvel)
+      implicit none
+      class(lss), intent(inout) :: this
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: U         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: V         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: W         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: P         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: RHO       !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), intent(in) :: dti,Gamma,Pinf
+      type(part), intent(in) :: pi
+      real(WP), intent(out) :: srcRHO,srcI
+      real(WP), dimension(3), intent(out) :: srcvel,pos_gp
+      integer, dimension(3), intent(out) :: ind_gp
+      real(WP) :: P_IP,RHO_IP,fRHO,RHO_GP,I_GP,P_GP,RHO_tar,I_tar
+      integer, dimension(3) :: ind_ip
+      real(WP), dimension(3) :: fvel,pos_ip
+      
+      ! Interpolate fluid quantities to the particle location
+      fvel=0.0_WP
+      if (this%cfg%nx.gt.1) fvel(1)=this%interpolate(A=U,xp=pi%pos(1),yp=pi%pos(2),zp=pi%pos(3),ip=pi%ind(1),jp=pi%ind(2),kp=pi%ind(3),dir='U')
+      if (this%cfg%ny.gt.1) fvel(2)=this%interpolate(A=V,xp=pi%pos(1),yp=pi%pos(2),zp=pi%pos(3),ip=pi%ind(1),jp=pi%ind(2),kp=pi%ind(3),dir='V')
+      if (this%cfg%nz.gt.1) fvel(3)=this%interpolate(A=W,xp=pi%pos(1),yp=pi%pos(2),zp=pi%pos(3),ip=pi%ind(1),jp=pi%ind(2),kp=pi%ind(3),dir='W')
+      fRHO=this%interpolate(A=rho,xp=pi%pos(1),yp=pi%pos(2),zp=pi%pos(3),ip=pi%ind(1),jp=pi%ind(2),kp=pi%ind(3),dir='SC')
 
+      ! Momentum source term computed at every particle
+      srcvel=fRHO*(pi%vel-fvel)*dti*this%dV
 
-
-
-    
+      ! Surface particles handle ghost/image points for Neumann BC
+      if (pi%flag.eq.2) then
+         ! Get ghost/image point coordinates
+         pos_ip=pi%pos+this%cfg%min_meshsize*pi%norm
+         ind_ip=this%cfg%get_ijk_local(pos_ip,pi%ind)
+         pos_gp=pi%pos-this%cfg%min_meshsize*pi%norm
+         ind_gp=this%cfg%get_ijk_local(pos_gp,pi%ind)
+         ! Interpolate fluid quantities to image points
+         P_IP=this%interpolate(A=P,xp=pos_ip(1),yp=pos_ip(2),zp=pos_ip(3),ip=ind_ip(1),jp=ind_ip(2),kp=ind_ip(3),dir='SC')
+         RHO_IP=this%interpolate(A=RHO,xp=pos_ip(1),yp=pos_ip(2),zp=pos_ip(3),ip=ind_ip(1),jp=ind_ip(2),kp=ind_ip(3),dir='SC')
+         ! Interpolate fluid quantities to the ghost point
+         P_GP=this%interpolate(A=P,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),dir='SC')
+         RHO_GP=this%interpolate(A=RHO,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),dir='SC')
+         ! Reconstruct conserved variables at the ghost point using ideal gas
+         I_GP=(P_GP+Gamma*Pinf)/(RHO_GP*(Gamma-1.0_WP))
+         ! Set target conserved variables to enforce adiabatic BC
+         RHO_tar=RHO_IP
+         I_tar=(P_IP+Gamma*Pinf)/(RHO_IP*(Gamma-1.0_WP))
+         ! Source terms to enforce adiabatic
+         srcvel=fRHO*(pi%vel-fvel)*dti*this%dV
+         srcRHO=(RHO_tar-RHO_GP)*dti*this%dV
+         srcI=(I_tar-I_GP)*dti*this%dV
+      end if
+      
+   end subroutine get_source
 
    
    !> Update particle volume fraction using our current particles

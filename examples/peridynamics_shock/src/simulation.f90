@@ -385,6 +385,8 @@ module simulation
                do p=1,np
                   ! Set position
                   ls%p(p)%pos=pos(:,p)
+                  ! Set outward normal
+                  ls%p(p)%norm=ls%p(p)%pos/sqrt(sum(ls%p(p)%pos**2))
                   ! Set object id and velocity
                   ls%p(p)%id=1
                   ls%p(p)%vel=0.0_WP
@@ -397,6 +399,7 @@ module simulation
                   ! Activate the particle
                   ls%p(p)%flag=0
                   ! Determine surface particles (set flag=2)
+                  if (sqrt(sum(ls%p(p)%pos**2)).gt.Rcyl-dx) ls%p(p)%flag=2
                end do
                deallocate(pos)
              end block object
@@ -599,10 +602,13 @@ module simulation
          ! Advance particles
          call ls%substep_rk4(stage =1,&
          &                   dt    =time%dt,&
+         &                   gamma =Gamma,&
+         &                   Pinf  =Pinf,&
          &                   U     =fs%U,&
          &                   V     =fs%V,&
          &                   W     =fs%W,&
-         &                   rho   =fs%Q(:,:,:,1),&
+         &                   P     =fs%P,&
+         &                   RHO   =fs%Q(:,:,:,1),&
          &                   srcRHO=srcQ(:,:,:,1),&
          &                   srcI  =srcQ(:,:,:,2),&
          &                   srcU  =srcQ(:,:,:,3),&
@@ -621,10 +627,13 @@ module simulation
          ! Advance particles
          call ls%substep_rk4(stage =2,&
          &                   dt    =time%dt,&
+         &                   gamma =Gamma,&
+         &                   Pinf  =Pinf,&
          &                   U     =fs%U,&
          &                   V     =fs%V,&
          &                   W     =fs%W,&
-         &                   rho   =fs%Q(:,:,:,1),&
+         &                   P     =fs%P,&
+         &                   RHO   =fs%Q(:,:,:,1),&
          &                   srcRHO=srcQ(:,:,:,1),&
          &                   srcI  =srcQ(:,:,:,2),&
          &                   srcU  =srcQ(:,:,:,3),&
@@ -643,10 +652,13 @@ module simulation
          ! Advance particles
          call ls%substep_rk4(stage =3,&
          &                   dt    =time%dt,&
+         &                   gamma =Gamma,&
+         &                   Pinf  =Pinf,&
          &                   U     =fs%U,&
          &                   V     =fs%V,&
          &                   W     =fs%W,&
-         &                   rho   =fs%Q(:,:,:,1),&
+         &                   P     =fs%P,&
+         &                   RHO   =fs%Q(:,:,:,1),&
          &                   srcRHO=srcQ(:,:,:,1),&
          &                   srcI  =srcQ(:,:,:,2),&
          &                   srcU  =srcQ(:,:,:,3),&
@@ -665,10 +677,13 @@ module simulation
          ! Advance particles
          call ls%substep_rk4(stage =4,&
          &                   dt    =time%dt,&
+         &                   gamma =Gamma,&
+         &                   Pinf  =Pinf,&
          &                   U     =fs%U,&
          &                   V     =fs%V,&
          &                   W     =fs%W,&
-         &                   rho   =fs%Q(:,:,:,1),&
+         &                   P     =fs%P,&
+         &                   RHO   =fs%Q(:,:,:,1),&
          &                   srcRHO=srcQ(:,:,:,1),&
          &                   srcI  =srcQ(:,:,:,2),&
          &                   srcU  =srcQ(:,:,:,3),&
