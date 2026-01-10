@@ -35,7 +35,7 @@ module lss_class
       real(WP), dimension(3) :: pos          !< Particle center coordinates
       real(WP), dimension(3) :: vel          !< Velocity of particle
       real(WP), dimension(3) :: Abond        !< Bond acceleration for particle
-      real(WP), dimension(3) :: ibmForce     !< Fluid force from IBM
+      real(WP), dimension(3) :: drag         !< Fluid force from IBM
       real(WP), dimension(3) :: norm         !< Outward normal vector
       !> MPI_INTEGER data
       integer :: id                          !< ID the object is associated with
@@ -581,8 +581,8 @@ contains
                call this%extrapolate(Ap=srcI_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcI,dir='SC')
             end if
             ! Get right-hand side terms
-            this%p(i)%ibmForce=-srcvel_
-            acc=this%p(i)%ibmForce/(this%rho*this%dV)
+            this%p(i)%drag=-srcvel_
+            acc=this%p(i)%drag/(this%rho*this%dV)
             dxdt=this%p(i)%vel
             dudt=this%gravity+this%p(i)%Abond+acc           
             ! Update particle position
@@ -618,8 +618,8 @@ contains
                call this%extrapolate(Ap=srcI_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcI,dir='SC')
             end if
             ! Get right-hand side terms
-            this%p(i)%ibmForce=-srcvel_
-            acc=this%p(i)%ibmForce/(this%rho*this%dV)
+            this%p(i)%drag=-srcvel_
+            acc=this%p(i)%drag/(this%rho*this%dV)
             dxdt=this%p(i)%vel
             dudt=this%gravity+this%p(i)%Abond+acc 
             ! Update particle position
@@ -655,8 +655,8 @@ contains
                call this%extrapolate(Ap=srcI_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcI,dir='SC')
             end if
             ! Get right-hand side terms
-            this%p(i)%ibmForce=-srcvel_
-            acc=this%p(i)%ibmForce/(this%rho*this%dV)
+            this%p(i)%drag=-srcvel_
+            acc=this%p(i)%drag/(this%rho*this%dV)
             dxdt=this%p(i)%vel
             dudt=this%gravity+this%p(i)%Abond+acc
             ! Update particle position
@@ -692,8 +692,8 @@ contains
                call this%extrapolate(Ap=srcI_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcI,dir='SC')
             end if
             ! Get right-hand side terms
-            this%p(i)%ibmForce=-srcvel_
-            acc=this%p(i)%ibmForce/(this%rho*this%dV)
+            this%p(i)%drag=-srcvel_
+            acc=this%p(i)%drag/(this%rho*this%dV)
             dxdt=this%p(i)%vel
             dudt=this%gravity+this%p(i)%Abond+acc 
             ! Update particle position
@@ -997,7 +997,7 @@ contains
          this%Umin=min(this%Umin,this%p(i)%vel(1)); this%Umax=max(this%Umax,this%p(i)%vel(1)); this%Umean=this%Umean+this%p(i)%vel(1)
          this%Vmin=min(this%Vmin,this%p(i)%vel(2)); this%Vmax=max(this%Vmax,this%p(i)%vel(2)); this%Vmean=this%Vmean+this%p(i)%vel(2)
          this%Wmin=min(this%Wmin,this%p(i)%vel(3)); this%Wmax=max(this%Wmax,this%p(i)%vel(3)); this%Wmean=this%Wmean+this%p(i)%vel(3)
-         this%ibmForce=this%ibmForce+this%p(i)%ibmForce
+         this%ibmForce=this%ibmForce+this%p(i)%drag
       end do
       call MPI_ALLREDUCE(this%Umin ,buf,1,MPI_REAL_WP,MPI_MIN,this%cfg%comm,ierr); this%Umin =buf
       call MPI_ALLREDUCE(this%Umax ,buf,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr); this%Umax =buf
