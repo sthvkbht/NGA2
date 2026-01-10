@@ -35,6 +35,7 @@ module lss_class
       real(WP), dimension(3) :: pos          !< Particle center coordinates
       real(WP), dimension(3) :: vel          !< Velocity of particle
       real(WP), dimension(3) :: Abond        !< Bond acceleration for particle
+      real(WP), dimension(3) :: ibmForce     !< Fluid force from IBM
       real(WP), dimension(3) :: norm         !< Outward normal vector
       !> MPI_INTEGER data
       integer :: id                          !< ID the object is associated with
@@ -46,7 +47,7 @@ module lss_class
    end type part
    !> Number of blocks, block length, and block types in a particle
    integer, parameter                         :: part_nblock=2
-   integer           , dimension(part_nblock) :: part_lblock=[14+max_bond,7+max_bond]
+   integer           , dimension(part_nblock) :: part_lblock=[17+max_bond,7+max_bond]
    type(MPI_Datatype), dimension(part_nblock) :: part_tblock=[MPI_DOUBLE_PRECISION,MPI_INTEGER]
    !> MPI_PART derived datatype and size
    type(MPI_Datatype) :: MPI_PART
@@ -102,6 +103,7 @@ module lss_class
       real(WP) :: Vmin,Vmax,Vmean                    !< V velocity info
       real(WP) :: Wmin,Wmax,Wmean                    !< W velocity info
       real(WP) :: VFmax                              !< Volume fraction info
+      real(WP), dimension(3) :: ibmForce             !< Total force due to IBM
       integer  :: np_out                             !< Number of particles leaving the domain
       
    contains
@@ -536,7 +538,7 @@ contains
       integer :: i,j,k,ierr
       real(WP) :: dti,rho_,srcRHO_,srcI_
       integer, dimension(3) :: ind_gp
-      real(WP), dimension(3) :: vel,acc,srcvel_,dxdt,dudt,pos_gp
+      real(WP), dimension(3) :: srcvel_,vel,acc,dxdt,dudt,pos_gp
       real(WP), parameter :: oneHalf=1.0_WP/2.0_WP
       real(WP), parameter :: oneThird=1.0_WP/3.0_WP
       real(WP), parameter :: oneSixth=1.0_WP/6.0_WP
@@ -568,7 +570,6 @@ contains
          ! Take a substep
          do i=1,this%np_
             if (this%p(i)%id.eq.0) cycle
-            acc=0.0_WP
             call this%get_source(dti=dti,Gamma=Gamma,Pinf=Pinf,U=U,V=V,W=W,P=P,RHO=RHO,pi=this%p(i),pos_gp=pos_gp,ind_gp=ind_gp,srcRHO=srcRHO_,srcI=srcI_,srcvel=srcvel_)
             ! Send momentum source terms back to the mesh using particle coordinate
             if (this%cfg%nx.gt.1) call this%extrapolate(Ap=srcvel_(1),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcU,dir='U')
@@ -580,7 +581,8 @@ contains
                call this%extrapolate(Ap=srcI_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcI,dir='SC')
             end if
             ! Get right-hand side terms
-            acc=-srcvel_/(this%rho*this%dV)
+            this%p(i)%ibmForce=-srcvel_
+            acc=this%p(i)%ibmForce/(this%rho*this%dV)
             dxdt=this%p(i)%vel
             dudt=this%gravity+this%p(i)%Abond+acc           
             ! Update particle position
@@ -605,7 +607,6 @@ contains
          ! Second RK step ====================================================================================
          do i=1,this%np_
             if (this%p(i)%id.eq.0) cycle
-            acc=0.0_WP
             call this%get_source(dti=dti,Gamma=Gamma,Pinf=Pinf,U=U,V=V,W=W,P=P,RHO=RHO,pi=this%p(i),pos_gp=pos_gp,ind_gp=ind_gp,srcRHO=srcRHO_,srcI=srcI_,srcvel=srcvel_)
             ! Send momentum source terms back to the mesh using particle coordinate
             if (this%cfg%nx.gt.1) call this%extrapolate(Ap=srcvel_(1),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcU,dir='U')
@@ -617,7 +618,8 @@ contains
                call this%extrapolate(Ap=srcI_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcI,dir='SC')
             end if
             ! Get right-hand side terms
-            acc=-srcvel_/(this%rho*this%dV)
+            this%p(i)%ibmForce=-srcvel_
+            acc=this%p(i)%ibmForce/(this%rho*this%dV)
             dxdt=this%p(i)%vel
             dudt=this%gravity+this%p(i)%Abond+acc 
             ! Update particle position
@@ -642,7 +644,6 @@ contains
           ! Third RK step ====================================================================================
          do i=1,this%np_
             if (this%p(i)%id.eq.0) cycle
-            acc=0.0_WP
             call this%get_source(dti=dti,Gamma=Gamma,Pinf=Pinf,U=U,V=V,W=W,P=P,RHO=RHO,pi=this%p(i),pos_gp=pos_gp,ind_gp=ind_gp,srcRHO=srcRHO_,srcI=srcI_,srcvel=srcvel_)
             ! Send momentum source terms back to the mesh using particle coordinate
             if (this%cfg%nx.gt.1) call this%extrapolate(Ap=srcvel_(1),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcU,dir='U')
@@ -654,7 +655,8 @@ contains
                call this%extrapolate(Ap=srcI_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcI,dir='SC')
             end if
             ! Get right-hand side terms
-            acc=-srcvel_/(this%rho*this%dV)
+            this%p(i)%ibmForce=-srcvel_
+            acc=this%p(i)%ibmForce/(this%rho*this%dV)
             dxdt=this%p(i)%vel
             dudt=this%gravity+this%p(i)%Abond+acc
             ! Update particle position
@@ -679,7 +681,6 @@ contains
          ! Fourth RK step ====================================================================================
          do i=1,this%np_
             if (this%p(i)%id.eq.0) cycle
-           acc=0.0_WP
             call this%get_source(dti=dti,Gamma=Gamma,Pinf=Pinf,U=U,V=V,W=W,P=P,RHO=RHO,pi=this%p(i),pos_gp=pos_gp,ind_gp=ind_gp,srcRHO=srcRHO_,srcI=srcI_,srcvel=srcvel_)
             ! Send momentum source terms back to the mesh using particle coordinate
             if (this%cfg%nx.gt.1) call this%extrapolate(Ap=srcvel_(1),xp=this%p(i)%pos(1),yp=this%p(i)%pos(2),zp=this%p(i)%pos(3),ip=this%p(i)%ind(1),jp=this%p(i)%ind(2),kp=this%p(i)%ind(3),A=srcU,dir='U')
@@ -691,7 +692,8 @@ contains
                call this%extrapolate(Ap=srcI_,xp=pos_gp(1),yp=pos_gp(2),zp=pos_gp(3),ip=ind_gp(1),jp=ind_gp(2),kp=ind_gp(3),A=srcI,dir='SC')
             end if
             ! Get right-hand side terms
-            acc=-srcvel_/(this%rho*this%dV)
+            this%p(i)%ibmForce=-srcvel_
+            acc=this%p(i)%ibmForce/(this%rho*this%dV)
             dxdt=this%p(i)%vel
             dudt=this%gravity+this%p(i)%Abond+acc 
             ! Update particle position
@@ -761,7 +763,7 @@ contains
       real(WP), intent(in) :: dti,Gamma,Pinf
       type(part), intent(in) :: pi
       real(WP), intent(out) :: srcRHO,srcI
-      real(WP), dimension(3), intent(out) :: srcvel,pos_gp
+      real(WP), dimension(3), intent(out) :: pos_gp,srcvel
       integer, dimension(3), intent(out) :: ind_gp
       real(WP) :: P_IP,RHO_IP,fRHO,RHO_GP,I_GP,P_GP,RHO_tar,I_tar
       integer, dimension(3) :: ind_ip
@@ -796,7 +798,6 @@ contains
          RHO_tar=RHO_IP
          I_tar=(P_IP+Gamma*Pinf)/(RHO_IP*(Gamma-1.0_WP))
          ! Source terms to enforce adiabatic
-         srcvel=fRHO*(pi%vel-fvel)*dti*this%dV
          srcRHO=(RHO_tar-RHO_GP)*dti*this%dV
          srcI=(I_tar-I_GP)*dti*this%dV
       end if
@@ -981,6 +982,7 @@ contains
       implicit none
       class(lss), intent(inout) :: this
       real(WP) :: buf,safe_np
+      real(WP), dimension(3) :: buf3D
       integer :: i,j,k,ierr
       
       ! Create safe np
@@ -990,10 +992,12 @@ contains
       this%Umin=huge(1.0_WP); this%Umax=-huge(1.0_WP); this%Umean=0.0_WP
       this%Vmin=huge(1.0_WP); this%Vmax=-huge(1.0_WP); this%Vmean=0.0_WP
       this%Wmin=huge(1.0_WP); this%Wmax=-huge(1.0_WP); this%Wmean=0.0_WP
+      this%ibmForce=0.0_WP
       do i=1,this%np_
          this%Umin=min(this%Umin,this%p(i)%vel(1)); this%Umax=max(this%Umax,this%p(i)%vel(1)); this%Umean=this%Umean+this%p(i)%vel(1)
          this%Vmin=min(this%Vmin,this%p(i)%vel(2)); this%Vmax=max(this%Vmax,this%p(i)%vel(2)); this%Vmean=this%Vmean+this%p(i)%vel(2)
          this%Wmin=min(this%Wmin,this%p(i)%vel(3)); this%Wmax=max(this%Wmax,this%p(i)%vel(3)); this%Wmean=this%Wmean+this%p(i)%vel(3)
+         this%ibmForce=this%ibmForce+this%p(i)%ibmForce
       end do
       call MPI_ALLREDUCE(this%Umin ,buf,1,MPI_REAL_WP,MPI_MIN,this%cfg%comm,ierr); this%Umin =buf
       call MPI_ALLREDUCE(this%Umax ,buf,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr); this%Umax =buf
@@ -1004,6 +1008,7 @@ contains
       call MPI_ALLREDUCE(this%Wmin ,buf,1,MPI_REAL_WP,MPI_MIN,this%cfg%comm,ierr); this%Wmin =buf
       call MPI_ALLREDUCE(this%Wmax ,buf,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr); this%Wmax =buf
       call MPI_ALLREDUCE(this%Wmean,buf,1,MPI_REAL_WP,MPI_SUM,this%cfg%comm,ierr); this%Wmean=buf/safe_np
+      call MPI_ALLREDUCE(this%ibmForce,buf3D,3,MPI_REAL_WP,MPI_SUM,this%cfg%comm,ierr); this%ibmForce=buf3D
 
       ! Get max volume fraction
       this%VFmax =-huge(1.0_WP)

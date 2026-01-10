@@ -572,6 +572,9 @@ module simulation
         call sfile%add_column(ls%Vmax,'Particle Vmax')
         call sfile%add_column(ls%Wmin,'Particle Wmin')
         call sfile%add_column(ls%Wmax,'Particle Wmax')
+        call sfile%add_column(ls%ibmForce(1),'Particle Fx')
+        call sfile%add_column(ls%ibmForce(2),'Particle Fy')
+        call sfile%add_column(ls%ibmForce(3),'Particle Fz')
         call sfile%write()
       end block create_monitor
 
