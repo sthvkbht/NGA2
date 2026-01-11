@@ -515,6 +515,9 @@ contains
     
 
    !> Advance the particle equations in a stage of RK4
+   !> p%id=-2 => do not solve for position nor velocity
+   !> p%id=-1 => do not solve for velocity
+   !> p%id= 0 => do not update force
    subroutine substep_rk4(this,stage,dt,Gamma,Pinf,U,V,W,P,RHO,srcRHO,srcI,srcU,srcV,srcW)
       use mpi_f08,   only: MPI_ALLREDUCE,MPI_SUM,MPI_MAX,MPI_INTEGER,MPI_IN_PLACE
       use parallel,  only: MPI_REAL_WP
@@ -586,11 +589,11 @@ contains
             dxdt=this%p(i)%vel
             dudt=this%gravity+this%p(i)%Abond+acc           
             ! Update particle position
-            this%pbuf(i)%pos = this%pold(i)%pos + dt*dxdt*oneSixth
-            this%p(i)%pos    = this%pold(i)%pos + dt*dxdt*oneHalf
+            if (this%p(i)%id.gt.-2) this%pbuf(i)%pos = this%pold(i)%pos + dt*dxdt*oneSixth
+            if (this%p(i)%id.gt.-2) this%p(i)%pos    = this%pold(i)%pos + dt*dxdt*oneHalf
             ! Update particle velocity
-            this%pbuf(i)%vel = this%pold(i)%vel + dt*dudt*oneSixth
-            this%p(i)%vel    = this%pold(i)%vel + dt*dudt*oneHalf
+            if (this%p(i)%id.gt.-1) this%pbuf(i)%vel = this%pold(i)%vel + dt*dudt*oneSixth
+            if (this%p(i)%id.gt.-1) this%p(i)%vel    = this%pold(i)%vel + dt*dudt*oneHalf
             ! Correct the position to take into account periodicity
             if (this%cfg%xper) this%p(i)%pos(1)=this%cfg%x(this%cfg%imin)+modulo(this%p(i)%pos(1)-this%cfg%x(this%cfg%imin),this%cfg%xL)
             if (this%cfg%yper) this%p(i)%pos(2)=this%cfg%y(this%cfg%jmin)+modulo(this%p(i)%pos(2)-this%cfg%y(this%cfg%jmin),this%cfg%yL)
@@ -623,11 +626,11 @@ contains
             dxdt=this%p(i)%vel
             dudt=this%gravity+this%p(i)%Abond+acc 
             ! Update particle position
-            this%pbuf(i)%pos = this%pbuf(i)%pos + dt*dxdt*oneThird
-            this%p(i)%pos    = this%pold(i)%pos + dt*dxdt*oneHalf
+            if (this%p(i)%id.gt.-2) this%pbuf(i)%pos = this%pbuf(i)%pos + dt*dxdt*oneThird
+            if (this%p(i)%id.gt.-2) this%p(i)%pos    = this%pold(i)%pos + dt*dxdt*oneHalf
             ! Update particle velocity
-            this%pbuf(i)%vel = this%pbuf(i)%vel + dt*dudt*oneThird
-            this%p(i)%vel    = this%pold(i)%vel + dt*dudt*oneHalf
+            if (this%p(i)%id.gt.-1) this%pbuf(i)%vel = this%pbuf(i)%vel + dt*dudt*oneThird
+            if (this%p(i)%id.gt.-1) this%p(i)%vel    = this%pold(i)%vel + dt*dudt*oneHalf
             ! Correct the position to take into account periodicity
             if (this%cfg%xper) this%p(i)%pos(1)=this%cfg%x(this%cfg%imin)+modulo(this%p(i)%pos(1)-this%cfg%x(this%cfg%imin),this%cfg%xL)
             if (this%cfg%yper) this%p(i)%pos(2)=this%cfg%y(this%cfg%jmin)+modulo(this%p(i)%pos(2)-this%cfg%y(this%cfg%jmin),this%cfg%yL)
@@ -660,11 +663,11 @@ contains
             dxdt=this%p(i)%vel
             dudt=this%gravity+this%p(i)%Abond+acc
             ! Update particle position
-            this%pbuf(i)%pos = this%pbuf(i)%pos + dt*dxdt*oneThird
-            this%p(i)%pos    = this%pold(i)%pos + dt*dxdt
+            if (this%p(i)%id.gt.-2) this%pbuf(i)%pos = this%pbuf(i)%pos + dt*dxdt*oneThird
+            if (this%p(i)%id.gt.-2) this%p(i)%pos    = this%pold(i)%pos + dt*dxdt
             ! Update particle velocity
-            this%pbuf(i)%vel = this%pbuf(i)%vel + dt*dudt*oneThird
-            this%p(i)%vel    = this%pold(i)%vel + dt*dudt
+            if (this%p(i)%id.gt.-1) this%pbuf(i)%vel = this%pbuf(i)%vel + dt*dudt*oneThird
+            if (this%p(i)%id.gt.-1) this%p(i)%vel    = this%pold(i)%vel + dt*dudt
             ! Correct the position to take into account periodicity
             if (this%cfg%xper) this%p(i)%pos(1)=this%cfg%x(this%cfg%imin)+modulo(this%p(i)%pos(1)-this%cfg%x(this%cfg%imin),this%cfg%xL)
             if (this%cfg%yper) this%p(i)%pos(2)=this%cfg%y(this%cfg%jmin)+modulo(this%p(i)%pos(2)-this%cfg%y(this%cfg%jmin),this%cfg%yL)
@@ -697,9 +700,9 @@ contains
             dxdt=this%p(i)%vel
             dudt=this%gravity+this%p(i)%Abond+acc 
             ! Update particle position
-            this%p(i)%pos    = this%pbuf(i)%pos + dt*dxdt*oneSixth
+            if (this%p(i)%id.gt.-2) this%p(i)%pos = this%pbuf(i)%pos + dt*dxdt*oneSixth
             ! Update particle velocity
-            this%p(i)%vel    = this%pbuf(i)%vel + dt*dudt*oneSixth
+            if (this%p(i)%id.gt.-1) this%p(i)%vel = this%pbuf(i)%vel + dt*dudt*oneSixth
             ! Correct the position to take into account periodicity
             if (this%cfg%xper) this%p(i)%pos(1)=this%cfg%x(this%cfg%imin)+modulo(this%p(i)%pos(1)-this%cfg%x(this%cfg%imin),this%cfg%xL)
             if (this%cfg%yper) this%p(i)%pos(2)=this%cfg%y(this%cfg%jmin)+modulo(this%p(i)%pos(2)-this%cfg%y(this%cfg%jmin),this%cfg%yL)
