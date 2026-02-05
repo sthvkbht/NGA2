@@ -50,7 +50,7 @@ contains
          end do
          
          ! General serial grid object (no=2x number of ghost layers)
-         grid=sgrid(coord=cartesian,no=6,x=x,y=y,z=z,xper=.false.,yper=.false.,zper=.true.,name='box')
+         grid=sgrid(coord=cartesian,no=2,x=x,y=y,z=z,xper=.false.,yper=.true.,zper=.true.,name='box')
          
       end block create_grid
       
@@ -77,14 +77,15 @@ contains
          do k=cfg%kmino_,cfg%kmaxo_
             do j=cfg%jmino_,cfg%jmaxo_
                do i=cfg%imino_,cfg%imaxo_
-                  cfg%Gib(i,j,k)=sqrt(cfg%xm(i)**2+cfg%ym(j)**2)-Rcyl
+                  cfg%Gib(i,j,k)=Rcyl-sqrt(cfg%xm(i)**2+cfg%ym(j)**2)
                end do
             end do
          end do
          ! Get normal vector
          call cfg%calculate_normal()
          ! Get VF field
-         cfg%VF=1.0_WP
+         call cfg%calculate_vf(method=sharp,allow_zero_vf=.true.)
+         cfg%Gib=-cfg%Gib
       end block create_walls
       
       

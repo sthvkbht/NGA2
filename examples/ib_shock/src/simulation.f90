@@ -3,7 +3,6 @@ module simulation
    use precision,         only: WP
    use geometry,          only: cfg,Rcyl
    use spcomp_class,      only: spcomp
-   use gp_class,          only: gpibm
    use timetracker_class, only: timetracker
    use timer_class,       only: timer
    use ensight_class,     only: ensight
@@ -14,7 +13,6 @@ module simulation
    
    !> Get a couple linear solvers, an incompressible flow solver and corresponding time tracker
    type(spcomp),      public :: fs
-   type(gpibm),       public :: gp
    type(timetracker), public :: time
    
    !> Ensight postprocessing
@@ -217,51 +215,44 @@ module simulation
    end subroutine get_force
 
 
-   !> Overwrite ghostpoints to enforce BC at the cylinder
+   !> Overwrite cosnerved variables using volume-of-solid IBM
    subroutine apply_ibm()
-     use gp_class, only: dirichlet,neumann
      implicit none
-     integer :: i,j,k,n
-     ! Recompute primitive variables
-     call fs%get_primitive()
-     ! Reset interior points
+     integer :: i,j,k
+     real(WP) :: sum_VF,sum_VFQ1,sum_VFQ2
      do k=cfg%kmin_,cfg%kmax_
         do j=cfg%jmin_,cfg%jmax_
            do i=cfg%imin_,cfg%imax_
-              if (cfg%Gib(i,j,k).lt.0.0_WP) then
-                 fs%Q(i,j,k,1)=rho1
-                 fs%P(i,j,k)  =p1
-                 fs%I(i,j,k)  =get_I(rho1,p1)
-                 fs%Q(i,j,k,2)=rho1*fs%I(i,j,k)
+              ! No-slip
+              fs%Q(i,j,k,3)=0.5_WP*(cfg%VF(i-1,j,k)+cfg%VF(i,j,k))*fs%Q(i,j,k,3)
+              fs%Q(i,j,k,4)=0.5_WP*(cfg%VF(i,j-1,k)+cfg%VF(i,j,k))*fs%Q(i,j,k,4)
+              fs%Q(i,j,k,5)=0.5_WP*(cfg%VF(i,j,k-1)+cfg%VF(i,j,k))*fs%Q(i,j,k,5)
+              ! Neumann: VF-weighted neighbor average for Q(1) and Q(2)
+              if (cfg%VF(i,j,k).eq.1.0_WP) cycle
+              sum_VF  =cfg%VF(i-1,j,k)+cfg%VF(i+1,j,k) &
+                   &  +cfg%VF(i,j-1,k)+cfg%VF(i,j+1,k) &
+                   &  +cfg%VF(i,j,k-1)+cfg%VF(i,j,k+1)
+              sum_VFQ1=cfg%VF(i-1,j,k)*fs%Q(i-1,j,k,1)+cfg%VF(i+1,j,k)*fs%Q(i+1,j,k,1) &
+                   &  +cfg%VF(i,j-1,k)*fs%Q(i,j-1,k,1)+cfg%VF(i,j+1,k)*fs%Q(i,j+1,k,1) &
+                   &  +cfg%VF(i,j,k-1)*fs%Q(i,j,k-1,1)+cfg%VF(i,j,k+1)*fs%Q(i,j,k+1,1)
+              sum_VFQ2=cfg%VF(i-1,j,k)*fs%Q(i-1,j,k,2)+cfg%VF(i+1,j,k)*fs%Q(i+1,j,k,2) &
+                   &  +cfg%VF(i,j-1,k)*fs%Q(i,j-1,k,2)+cfg%VF(i,j+1,k)*fs%Q(i,j+1,k,2) &
+                   &  +cfg%VF(i,j,k-1)*fs%Q(i,j,k-1,2)+cfg%VF(i,j,k+1)*fs%Q(i,j,k+1,2)
+              if (sum_VF.gt.0.0_WP) then
+                 fs%Q(i,j,k,1)=cfg%VF(i,j,k)*fs%Q(i,j,k,1)+(1.0_WP-cfg%VF(i,j,k))*sum_VFQ1/sum_VF
+                 fs%Q(i,j,k,2)=cfg%VF(i,j,k)*fs%Q(i,j,k,2)+(1.0_WP-cfg%VF(i,j,k))*sum_VFQ2/sum_VF
               end if
-              if (0.5_WP*(cfg%Gib(i-1,j,k)+cfg%Gib(i,j,k)).lt.0.0_WP) fs%U(i,j,k)=u1
-              if (0.5_WP*(cfg%Gib(i,j-1,k)+cfg%Gib(i,j,k)).lt.0.0_WP) fs%V(i,j,k)=0.0_WP
-              if (0.5_WP*(cfg%Gib(i,j,k-1)+cfg%Gib(i,j,k)).lt.0.0_WP) fs%W(i,j,k)=0.0_WP
            end do
         end do
      end do
-     ! Overwrite primitive variables
-     call gp%apply_bcond(type=dirichlet,BP=0.0_WP,A=fs%U,dir='U')
-     call gp%apply_bcond(type=dirichlet,BP=0.0_WP,A=fs%V,dir='V')
-     call gp%apply_bcond(type=dirichlet,BP=0.0_WP,A=fs%W,dir='W')
-     call gp%apply_bcond(type=neumann,  BP=0.0_WP,A=fs%P,dir='SC')
-     call gp%apply_bcond(type=neumann,  BP=0.0_WP,A=fs%T,dir='SC')
-     ! Rebuild conserved quantities in the ghost cells
-     do n=1,gp%ngp
-        i=gp%gp(n)%ind(1); j=gp%gp(n)%ind(2); k=gp%gp(n)%ind(3)
-        fs%Q(i,j,k,1)=get_RHO(fs%T(i,j,k),fs%P(i,j,k))
-        fs%I(i,j,k)=get_I(fs%Q(i,j,k,1),fs%P(i,j,k))
-        fs%Q(i,j,k,2)=fs%Q(i,j,k,1)*fs%I(i,j,k)
-     end do
      ! Communicate
-     call fs%cfg%sync(fs%U)
-     call fs%cfg%sync(fs%V)
-     call fs%cfg%sync(fs%W)
-     call fs%cfg%sync(fs%P)
-     call fs%cfg%sync(fs%I)
-     call fs%cfg%sync( fs%Q(:,:,:,1))
-     call fs%cfg%sync( fs%Q(:,:,:,2))
-     call fs%get_momentum()
+     call fs%cfg%sync(fs%Q(:,:,:,1))
+     call fs%cfg%sync(fs%Q(:,:,:,2))
+     call fs%cfg%sync(fs%Q(:,:,:,3))
+     call fs%cfg%sync(fs%Q(:,:,:,4))
+     call fs%cfg%sync(fs%Q(:,:,:,5))
+     ! Rebuild primitive variables
+     call fs%get_primitive()
    end subroutine apply_ibm
 
 
@@ -575,13 +566,6 @@ module simulation
       end block initialize_variables
 
 
-      ! Initialize the ghost points with 3 layers of ghost cells
-      create_gp: block
-        gp=gpibm(cfg=cfg,no=3)
-        call gp%update()
-      end block create_gp
-
-
       ! Add Ensight output
       create_ensight: block
          ! Create Ensight output from cfg
@@ -599,7 +583,6 @@ module simulation
          call ens_out%add_scalar('visc_t',visc_t)
          call ens_out%add_scalar('div',div)
          call ens_out%add_scalar('Gib',cfg%Gib)
-         call ens_out%add_scalar('IBM',gp%label)
          ! Output to ensight
          if (ens_evt%occurs()) call ens_out%write_data(time%t)
       end block create_ensight
