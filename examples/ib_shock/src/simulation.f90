@@ -218,7 +218,7 @@ module simulation
    !> Overwrite cosnerved variables using volume-of-solid IBM
    subroutine apply_ibm()
      implicit none
-     integer :: i,j,k
+     integer :: i,j,k,ii,jj,kk
      real(WP) :: sum_VF,sum_VFQ1,sum_VFQ2
      do k=cfg%kmin_,cfg%kmax_
         do j=cfg%jmin_,cfg%jmax_
@@ -228,16 +228,14 @@ module simulation
               fs%Q(i,j,k,4)=0.5_WP*(cfg%VF(i,j-1,k)+cfg%VF(i,j,k))*fs%Q(i,j,k,4)
               fs%Q(i,j,k,5)=0.5_WP*(cfg%VF(i,j,k-1)+cfg%VF(i,j,k))*fs%Q(i,j,k,5)
               ! Neumann: VF-weighted neighbor average for Q(1) and Q(2)
+              sum_VF=0.0_WP; sum_VFQ1=0.0_WP; sum_VFQ2=0.0_WP
               if (cfg%VF(i,j,k).eq.1.0_WP) cycle
-              sum_VF  =cfg%VF(i-1,j,k)+cfg%VF(i+1,j,k) &
-                   &  +cfg%VF(i,j-1,k)+cfg%VF(i,j+1,k) &
-                   &  +cfg%VF(i,j,k-1)+cfg%VF(i,j,k+1)
-              sum_VFQ1=cfg%VF(i-1,j,k)*fs%Q(i-1,j,k,1)+cfg%VF(i+1,j,k)*fs%Q(i+1,j,k,1) &
-                   &  +cfg%VF(i,j-1,k)*fs%Q(i,j-1,k,1)+cfg%VF(i,j+1,k)*fs%Q(i,j+1,k,1) &
-                   &  +cfg%VF(i,j,k-1)*fs%Q(i,j,k-1,1)+cfg%VF(i,j,k+1)*fs%Q(i,j,k+1,1)
-              sum_VFQ2=cfg%VF(i-1,j,k)*fs%Q(i-1,j,k,2)+cfg%VF(i+1,j,k)*fs%Q(i+1,j,k,2) &
-                   &  +cfg%VF(i,j-1,k)*fs%Q(i,j-1,k,2)+cfg%VF(i,j+1,k)*fs%Q(i,j+1,k,2) &
-                   &  +cfg%VF(i,j,k-1)*fs%Q(i,j,k-1,2)+cfg%VF(i,j,k+1)*fs%Q(i,j,k+1,2)
+              do kk=-1,1; do jj=-1,1; do ii=-1,1
+                 if (ii.eq.0.and.jj.eq.0.and.kk.eq.0) cycle
+                 sum_VF  =sum_VF  +cfg%VF(i+ii,j+jj,k+kk)
+                 sum_VFQ1=sum_VFQ1+cfg%VF(i+ii,j+jj,k+kk)*fs%Q(i+ii,j+jj,k+kk,1)
+                 sum_VFQ2=sum_VFQ2+cfg%VF(i+ii,j+jj,k+kk)*fs%Q(i+ii,j+jj,k+kk,2)
+              end do; end do; end do
               if (sum_VF.gt.0.0_WP) then
                  fs%Q(i,j,k,1)=cfg%VF(i,j,k)*fs%Q(i,j,k,1)+(1.0_WP-cfg%VF(i,j,k))*sum_VFQ1/sum_VF
                  fs%Q(i,j,k,2)=cfg%VF(i,j,k)*fs%Q(i,j,k,2)+(1.0_WP-cfg%VF(i,j,k))*sum_VFQ2/sum_VF
