@@ -141,9 +141,9 @@ contains
          real(WP) :: Dp,Lp,dx,x,theta,r
          real(WP) :: scale_factor,shift_x
          character(len=80) :: stlfile,header
-         call param_read('STL file',stlfile)
          df=dfibm(cfg=cfg,name='IBM')
          df%can_move=.true.
+         call param_read('STL file',stlfile)
          call param_read('Angular speed',omega)
          ! Initialize marker particles
          if (df%cfg%amRoot) then
