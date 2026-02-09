@@ -1,13 +1,13 @@
 # Parallelization
-Partition :	1 2 2
+Partition :	2 2 1
 
 # Mesh definition
-Lx :	20
-Ly :	8
-Lz :	8
-nx :	200
-ny :	80
-nz :	80
+Lx :	10
+Ly :	6
+Lz :	0.025
+nx :	400
+ny :	240
+nz :	1
 
 # Case definition
 Cylinder radius : 0.5
@@ -20,7 +20,7 @@ Shock location :   -1
 Reynolds number : 5000
 
 # Solid properties
-Solid dx : 0.05
+Particle file : cylinder.part
 Elastic Modulus : 1000
 Poisson Ratio : 0.25
 Solid density : 10
