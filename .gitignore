@@ -49,6 +49,7 @@ examples/*/*
 examples/*/input*~
 !examples/*/README
 !examples/*/README.md
+!examples/*/*.stl
 !examples/*/src
 !examples/*/*.py
 !examples/*/*.sh
