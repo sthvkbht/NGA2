@@ -71,6 +71,7 @@ module lss_class
       
       ! Bonding parameters
       real(WP) :: delta                                   !< Bonding horizon (distance)
+      real(WP) :: min_dist                                !< Minimum bonding distance
       integer :: nb                                       !< Cell-based horizon 
       
       ! Global and local particle data
@@ -93,7 +94,7 @@ module lss_class
       real(WP), dimension(:,:,:), allocatable :: VFW      !< Solid velocity, W-face
       
       ! CFL numbers
-      real(WP) :: CFLp_x,CFLp_y,CFLp_z
+      real(WP) :: CFLp_x,CFLp_y,CFLp_z,CFLp_a
       
       ! Number of substeps for time integrator
       real(WP) :: nstep=1
@@ -167,6 +168,7 @@ contains
       ! Set default bonding horizon based on underlying mesh
       self%delta=self%cfg%min_meshsize
       self%nb=1
+      self%min_dist=huge(1.0_WP)
       
       ! Allocate variables
       allocate(self%np_proc(1:self%cfg%nproc)); self%np_proc=0
@@ -373,11 +375,16 @@ contains
       
       ! Update weighted volume and dilatation
       update_weighted_vol_and_dilatation: block
-         integer :: i,j,k,n1,nn,n2
+        use mpi_f08,  only: MPI_ALLREDUCE,MPI_MIN,MPI_IN_PLACE
+        use parallel, only: MPI_REAL_WP
+         integer :: i,j,k,n1,nn,n2,ierr
          type(part) :: p1,p2
          integer :: nb,nbond
          real(WP), dimension(3) :: rpos
          real(WP) :: dist
+
+         ! Reset minimum bond distance
+         this%min_dist=huge(1.0_WP)
          
          ! Loop over particles
          do n1=1,this%np_
@@ -407,6 +414,7 @@ contains
                               ! Get current distance
                               rpos=p2%pos-p1%pos
                               dist=sqrt(dot_product(rpos,rpos))
+                              this%min_dist=min(this%min_dist,dist)
                               ! Increment dilatation
                               p1%dil=p1%dil+wgauss(p1%dbond(nb),this%delta)*p1%dbond(nb)*(dist-p1%dbond(nb))*p1%vol
                            end if
@@ -420,6 +428,10 @@ contains
             ! Copy back the particle
             this%p(n1)=p1
          end do
+
+         ! Get global minimum
+         call MPI_ALLREDUCE(MPI_IN_PLACE,this%min_dist,1,MPI_REAL_WP,MPI_MIN,this%cfg%comm,ierr)
+         
       end block update_weighted_vol_and_dilatation
       
       ! Re-communicate particles in ghost cells to update dil and mw
@@ -546,7 +558,7 @@ contains
       this%np_out=0
 
       ! Calculate bond force
-      ! call this%get_bond_force()
+      call this%get_bond_force()
 
       ! Advance in time
       do i=1,this%np_
@@ -818,9 +830,12 @@ contains
       call MPI_ALLREDUCE(my_CFLp_x,this%CFLp_x,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
       call MPI_ALLREDUCE(my_CFLp_y,this%CFLp_y,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
       call MPI_ALLREDUCE(my_CFLp_z,this%CFLp_z,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
+
+      ! CFL based on speed of sound in material
+      this%CFLp_a=dt/this%min_dist*sqrt(this%elastic_modulus/this%rho)
       
       ! Return the maximum CFL
-      cfl=max(this%CFLp_x,this%CFLp_y,this%CFLp_z)
+      cfl=max(this%CFLp_x,this%CFLp_y,this%CFLp_z,this%CFLp_a)
       
    end subroutine get_cfl
    

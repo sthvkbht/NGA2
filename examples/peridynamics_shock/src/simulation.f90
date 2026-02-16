@@ -28,8 +28,8 @@ module simulation
    public :: simulation_init,simulation_run,simulation_final
    
    !> Private work arrays
-   real(WP), dimension(:,:,:,:,:), allocatable :: dQdt
-   real(WP), dimension(:,:,:)    , allocatable :: Ui,Vi,Wi,Ma,beta,visc,visc_t,div
+   real(WP), dimension(:,:,:,:), allocatable :: dQdt
+   real(WP), dimension(:,:,:)  , allocatable :: Ui,Vi,Wi,Ma,beta,visc,visc_t,div
 
    !> Post-shock viscosity and temperature
    real(WP) :: visc0,T0
@@ -44,6 +44,7 @@ module simulation
    real(WP) :: Re
 
    !> Max timestep size for solid solver
+   integer :: ls_it
    real(WP) :: ls_dt,ls_dt_max
    
  contains
@@ -288,7 +289,7 @@ module simulation
 
       ! Allocate work arrays
       allocate_work_arrays: block
-        allocate(dQdt  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,1:fs%nQ,1:4))
+        allocate(dQdt  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_,1:fs%nQ))
         allocate(Ui    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
         allocate(Vi    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
         allocate(Wi    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
@@ -387,6 +388,7 @@ module simulation
          ! Maximum timestep size used for particles
          call param_read('Particle timestep size',ls_dt_max,default=huge(1.0_WP))
          ls_dt=min(ls_dt_max,time%dtmax)
+         ls_it=0
          
          ! Discretization
          ls%delta=fs%cfg%min_meshsize
@@ -567,6 +569,10 @@ module simulation
         call cflfile%add_column(fs%CFLv_x,'Viscous xCFL')
         call cflfile%add_column(fs%CFLv_y,'Viscous yCFL')
         call cflfile%add_column(fs%CFLv_z,'Viscous zCFL')
+        call cflfile%add_column(ls%CFLp_x,'Particle xCFL')
+        call cflfile%add_column(ls%CFLp_y,'Particle yCFL')
+        call cflfile%add_column(ls%CFLp_z,'Particle zCFL')
+        call cflfile%add_column(ls%CFLp_a,'Particle aCFL')
         call cflfile%write()
         ! Create conservation monitor
         consfile=monitor(fs%cfg%amRoot,'conservation')
@@ -585,6 +591,7 @@ module simulation
         call sfile%add_column(time%n,'Timestep number')
         call sfile%add_column(time%t,'Time')
         call sfile%add_column(ls_dt,'Particle dt')
+        call sfile%add_column(ls_it,'Particle sub-iter')
         call sfile%add_column(time%cfl,'Maximum CFL')
         call sfile%add_column(ls%np,'Particle number')
         call sfile%add_column(ls%VFmax,'VFmax')
@@ -621,21 +628,23 @@ module simulation
          solid: block
            real(WP) :: dt_done,mydt
            ! Compute divergence of fluid stress
-           call fs%get_div_stress(divx=dQdt(:,:,:,1,1),divy=dQdt(:,:,:,2,1),divz=dQdt(:,:,:,3,1))
+           call fs%get_div_stress(divx=dQdt(:,:,:,1),divy=dQdt(:,:,:,2),divz=dQdt(:,:,:,3))
            ! Sub-iteratore
            call ls%get_cfl(ls_dt,cfl=cfl)
            if (cfl.gt.0.0_WP) ls_dt=min(ls_dt*time%cflmax/cfl,ls_dt_max)
            dt_done=0.0_WP
+           ls_it=0
            do while (dt_done.lt.time%dtmid)
               ! Decide the timestep size
               mydt=min(ls_dt,time%dtmid-dt_done)
               ! Advance particles
-              call ls%advance(dt      =mydt,           &
-              &               stress_x=dQdt(:,:,:,1,1),&
-              &               stress_y=dQdt(:,:,:,2,1),&
-              &               stress_z=dQdt(:,:,:,3,1))
+              call ls%advance(dt      =mydt,         &
+              &               stress_x=dQdt(:,:,:,1),&
+              &               stress_y=dQdt(:,:,:,2),&
+              &               stress_z=dQdt(:,:,:,3))
               ! Increment
               dt_done=dt_done+mydt
+              ls_it=ls_it+1
            end do
          end block solid
 
@@ -646,34 +655,16 @@ module simulation
          call prepare_viscosities()
 
          ! First RK step ====================================================================================
-         ! Get non-SL RHS and increment
-         call fs%rhs(dQdt(:,:,:,:,1))
-         ! Advance
-         fs%Q=fs%Qold+0.5_WP*time%dt*dQdt(:,:,:,:,1)
+         ! Get RHS and increment
+         call fs%rhs(dQdt)
+         fs%Q=fs%Qold+0.5_WP*time%dt*dQdt
          ! Apply IBM
          call apply_ibm()
 
          ! Second RK step ===================================================================================
-         ! Get non-SL RHS and increment
-         call fs%rhs(dQdt(:,:,:,:,2))
-         ! Advance
-         fs%Q=fs%Qold+0.5_WP*time%dt*dQdt(:,:,:,:,2)
-         ! Apply IBM
-         call apply_ibm()
-
-         ! Third RK step ====================================================================================
-         ! Get non-SL RHS and increment
-         call fs%rhs(dQdt=dQdt(:,:,:,:,3))
-         ! Advance
-         fs%Q=fs%Qold+1.0_WP*time%dt*dQdt(:,:,:,:,3)
-         ! Apply IBM
-         call apply_ibm()
-
-         ! Fourth RK step ===================================================================================
-         ! Get non-SL RHS and increment
-         call fs%rhs(dQdt(:,:,:,:,4))
-         ! Advance
-         fs%Q=fs%Qold+time%dt/6.0_WP*(dQdt(:,:,:,:,1)+2.0_WP*dQdt(:,:,:,:,2)+2.0_WP*dQdt(:,:,:,:,3)+dQdt(:,:,:,:,4))
+         ! Get RHS and increment at midpoint
+         call fs%rhs(dQdt)
+         fs%Q=fs%Qold+time%dt*dQdt
          ! Apply IBM
          call apply_ibm()
 
