@@ -208,9 +208,6 @@ contains
       class(lss), intent(inout) :: this
       integer, dimension(:,:,:),   allocatable :: npic    !< Number of particle in cell
       integer, dimension(:,:,:,:), allocatable :: ipic    !< Index of particle in cell
-
-      ! Needs to be fixed for 2D
-      if (this%cfg%nx.eq.1.or.this%cfg%ny.eq.1.or.this%cfg%nz.eq.1) return
       
       ! Communicate particles in ghost cells
       call this%share()
