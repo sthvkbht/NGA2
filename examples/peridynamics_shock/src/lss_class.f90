@@ -677,20 +677,15 @@ contains
       real(WP) :: deltax,deltay,deltaz,r
       
       ! Compute in X
-      if (this%cfg%nx.gt.1) then
-         if (trim(adjustl(dir)).eq.'U') then
-            r=(xp-this%cfg%x(ic))*this%cfg%dxmi(ic)
-            deltax=roma_kernel(r)*this%cfg%dxmi(ic)
-         else
-            r=(xp-this%cfg%xm(ic))*this%cfg%dxi(ic)
-            deltax=roma_kernel(r)*this%cfg%dxi(ic)
-         end if
+      if (trim(adjustl(dir)).eq.'U') then
+         r=(xp-this%cfg%x(ic))*this%cfg%dxmi(ic)
+         deltax=roma_kernel(r)*this%cfg%dxmi(ic)
       else
-         deltax=1.0_WP
+         r=(xp-this%cfg%xm(ic))*this%cfg%dxi(ic)
+         deltax=roma_kernel(r)*this%cfg%dxi(ic)
       end if
       
       ! Compute in Y
-      if (this%cfg%ny.gt.1) then
       if (trim(adjustl(dir)).eq.'V') then
          r=(yp-this%cfg%y(jc))*this%cfg%dymi(jc)
          deltay=roma_kernel(r)*this%cfg%dymi(jc)
@@ -698,12 +693,8 @@ contains
          r=(yp-this%cfg%ym(jc))*this%cfg%dyi(jc)
          deltay=roma_kernel(r)*this%cfg%dyi(jc)
       end if
-      else
-         deltay=1.0_WP
-      end if
       
       ! Compute in Z
-      if (this%cfg%nz.gt.1) then
       if (trim(adjustl(dir)).eq.'W') then
          r=(zp-this%cfg%z(kc))*this%cfg%dzmi(kc)
          deltaz=roma_kernel(r)*this%cfg%dzmi(kc)
@@ -711,9 +702,7 @@ contains
          r=(zp-this%cfg%zm(kc))*this%cfg%dzi(kc)
          deltaz=roma_kernel(r)*this%cfg%dzi(kc)
       end if
-      else
-         deltaz=1.0_WP
-      end if
+      !else
       
       ! Put it all together
       delta=deltax*deltay*deltaz
@@ -735,8 +724,8 @@ contains
       end function roma_kernel
       
    end subroutine get_delta
-   
-   
+
+
    !> Interpolation routine
    function interpolate(this,A,xp,yp,zp,ip,jp,kp,dir) result(Ap)
       implicit none
@@ -748,32 +737,15 @@ contains
       real(WP) :: Ap
       integer :: di,dj,dk
       integer :: i1,i2,j1,j2,k1,k2
-      integer :: di_min,di_max,dj_min,dj_max,dk_min,dk_max
       real(WP), dimension(-2:+2,-2:+2,-2:+2) :: delta
       ! Get the interpolation points
       i1=ip-2; i2=ip+2
       j1=jp-2; j2=jp+2
       k1=kp-2; k2=kp+2
       ! Loop over neighboring cells and compute regularized delta function
-      delta=0.0_WP
-      if (this%cfg%nx.gt.1) then
-         di_min=-2; di_max=2
-      else
-         di_min=0; di_max=0
-      end if
-      if (this%cfg%ny.gt.1) then
-         dj_min=-2; dj_max=2
-      else
-         dj_min=0; dj_max=0
-      end if
-      if (this%cfg%nz.gt.1) then
-         dk_min=-2; dk_max=2
-      else
-         dk_min=0; dk_max=0
-      end if
-      do dk=dk_min,dk_max
-         do dj=dj_min,dj_max
-            do di=di_min,di_max
+      do dk=-2,+2
+         do dj=-2,+2
+            do di=-2,+2
                call this%get_delta(delta=delta(di,dj,dk),ic=ip+di,jc=jp+dj,kc=kp+dk,xp=xp,yp=yp,zp=zp,dir=trim(dir))
             end do
          end do
@@ -795,7 +767,6 @@ contains
       character(len=*) :: dir
       real(WP), dimension(-2:+2,-2:+2,-2:+2) :: delta
       integer  :: di,dj,dk
-      integer :: di_min,di_max,dj_min,dj_max,dk_min,dk_max
       ! If particle has left processor domain or reached last ghost cell, kill job
       if ( ip.lt.this%cfg%imin_-1.or.ip.gt.this%cfg%imax_+1.or.&
       &    jp.lt.this%cfg%jmin_-1.or.jp.gt.this%cfg%jmax_+1.or.&
@@ -804,25 +775,9 @@ contains
          call die('[df extrapolate] Particle has left the domain')
       end if
       ! Loop over neighboring cells and compute regularized delta function
-      delta=0.0_WP
-      if (this%cfg%nx.gt.1) then
-         di_min=-2; di_max=2
-      else
-         di_min=0; di_max=0
-      end if
-      if (this%cfg%ny.gt.1) then
-         dj_min=-2; dj_max=2
-      else
-         dj_min=0; dj_max=0
-      end if
-      if (this%cfg%nz.gt.1) then
-         dk_min=-2; dk_max=2
-      else
-         dk_min=0; dk_max=0
-      end if
-      do dk=dk_min,dk_max
-         do dj=dj_min,dj_max
-            do di=di_min,di_max
+      do dk=-2,+2
+         do dj=-2,+2
+            do di=-2,+2
                call this%get_delta(delta=delta(di,dj,dk),ic=ip+di,jc=jp+dj,kc=kp+dk,xp=xp,yp=yp,zp=zp,dir=trim(dir))
             end do
          end do
