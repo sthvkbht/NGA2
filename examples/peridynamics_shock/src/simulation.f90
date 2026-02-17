@@ -360,8 +360,12 @@ module simulation
            use messager, only: die
            integer :: p,iunit,ierr
            character(len=80) :: partfile
-           real(WP) :: vol_tot
+           real(WP) :: t,vol_tot
            if (ls%cfg%amRoot) then
+              t=1.0_WP
+              if (fs%cfg%nx.eq.1) t=fs%cfg%xL
+              if (fs%cfg%ny.eq.1) t=fs%cfg%yL
+              if (fs%cfg%nz.eq.1) t=fs%cfg%zL
               call param_read('Particle file',partfile)
               open(newunit=iunit,file=trim(partfile),access="stream",form="unformatted",action="read",status="old",iostat=ierr)
               if(ierr.ne.0) call die('[read_stl] Could not open file: '//trim(partfile))
@@ -371,6 +375,7 @@ module simulation
               do p=1,np
                  ! Read in position and volume
                  read(iunit) ls%p(p)%pos(1), ls%p(p)%pos(2), ls%p(p)%pos(3), ls%p(p)%vol
+                 ls%p(p)%vol=ls%p(p)%vol*t
                  vol_tot=vol_tot+ls%p(p)%vol
                  ! Set object id and velocity
                  ls%p(p)%id=1
@@ -385,7 +390,7 @@ module simulation
                  ls%p(p)%flag=0
               end do
               if (fs%cfg%nx.eq.1.or.fs%cfg%ny.eq.1.or.fs%cfg%nz.eq.1) then
-                 Rcyl=sqrt(vol_tot/Pi)
+                 Rcyl=sqrt(vol_tot/t/Pi)
               else
                  Rcyl=(0.75_WP*vol_tot/Pi)**(1.0_WP/3.0_WP)
               end if
@@ -439,8 +444,6 @@ module simulation
         u2=u1*rho1/rho2
         ! Now shift frame of reference to obtain moving shock
         u2=abs(u2-u1); M2=u2/sqrt(Gamma*p2/rho2); u1=0.0_WP; M1=u1/sqrt(Gamma*p1/rho1)
-        u1=0.0_WP; u2=0.0_WP
-        rho2=rho1; p1=1.0_WP; p2=1.0_WP
         ! Set heat capacities corresponding to a normalized pre-shock
         Cv=(p1+Pinf)/(rho1*(Gamma-1.0_WP))
         ! Get reference temperature based on post-shock conditions

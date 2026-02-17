@@ -444,7 +444,7 @@ contains
          integer :: i,j,k,n1,nn,n2,ierr
          type(part) :: p1,p2
          real(WP), dimension(3) :: rpos,t12,t21
-         real(WP) :: dist,beta,alpha,ed
+         real(WP) :: dist,beta,alpha,ed,t
          real(WP) :: stretch,max_stretch,mu,kk
          real(WP) :: nc,rc,kc
          integer :: nb,nbond
@@ -454,11 +454,15 @@ contains
          kk=this%elastic_modulus/(3.0_WP-6.0_WP*this%poisson_ratio)
          if (is2D) then
             max_stretch=sqrt(this%crit_energy/((6.0_WP*mu/Pi+16.0_WP/(9.0_WP*Pi**2)*(kk-2.0_WP*mu))*this%delta))
+            if (this%cfg%nx.eq.1) t=this%cfg%xL
+            if (this%cfg%ny.eq.1) t=this%cfg%yL
+            if (this%cfg%nz.eq.1) t=this%cfg%zL
+            kc=15.0_WP*48.0_WP*this%elastic_modulus/(Pi*5.0_WP*t*this%delta**3)
          else
             max_stretch=sqrt(this%crit_energy/((3.0_WP*mu+(kk-5.0_WP*mu/3.0_WP)*0.75_WP**4)*this%delta))
+            kc=15.0_WP*12.0_WP*this%elastic_modulus/(Pi*this%delta**4)
          end if
          nc=1.0_WP
-         kc=15.0_WP*12.0_WP*this%elastic_modulus/(Pi*this%delta**4)
          this%min_dist=huge(1.0_WP)
          
          ! Loop over particles
@@ -541,7 +545,7 @@ contains
                            rc=p1%vol**(1.0_WP/3.0_WP)
                         end if
                         if (.not.found_bond.and.p1%i.ne.p2%i.and.dist.lt.rc) then
-                           p1%Abond=p1%Abond-kc*((rc/dist)**nc-1.0_WP)*(rpos/dist)*p1%vol/this%rho
+                           p1%Abond=p1%Abond-max(kc*((rc/dist)**nc-1.0_WP),0.0_WP)*(rpos/dist)*p1%vol/this%rho
                         end if
                      end do
                   end do
