@@ -314,6 +314,7 @@ module simulation
 
       ! Initialize Lagrangian solid solver
       initialize_lss: block
+         use mathtools, only: Pi
          real(WP) :: mu,kk,max_stretch,Lx,Ly,Lz,dz
          real(WP) :: xmin,xmax,ymin,ymax,zmin,zmax
          integer :: np
@@ -345,14 +346,17 @@ module simulation
          ! Output some info on stretch
          mu=ls%elastic_modulus/(2.0_WP+2.0_WP*ls%poisson_ratio)
          kk=ls%elastic_modulus/(3.0_WP-6.0_WP*ls%poisson_ratio)
-         max_stretch=sqrt(ls%crit_energy/((3.0_WP*mu+(kk-5.0_WP*mu/3.0_WP)*0.75_WP**4)*ls%delta))
+         if (fs%cfg%nx.eq.1.or.fs%cfg%ny.eq.1.or.fs%cfg%nz.eq.1) then
+            max_stretch=sqrt(ls%crit_energy/((6.0_WP*mu/Pi+16.0_WP/(9.0_WP*Pi**2)*(kk-2.0_WP*mu))*ls%delta))
+         else
+            max_stretch=sqrt(ls%crit_energy/((3.0_WP*mu+(kk-5.0_WP*mu/3.0_WP)*0.75_WP**4)*ls%delta))
+         end if
          
          ! Only root process initializes solid particles
          ! Read the STL file and get domain extents and levelset
          read_bin: block
            use mpi_f08,   only: MPI_BCAST
            use parallel,  only: MPI_REAL_WP
-           use mathtools, only: Pi
            use messager, only: die
            integer :: p,iunit,ierr
            character(len=80) :: partfile
@@ -435,6 +439,8 @@ module simulation
         u2=u1*rho1/rho2
         ! Now shift frame of reference to obtain moving shock
         u2=abs(u2-u1); M2=u2/sqrt(Gamma*p2/rho2); u1=0.0_WP; M1=u1/sqrt(Gamma*p1/rho1)
+        u1=0.0_WP; u2=0.0_WP
+        rho2=rho1; p1=1.0_WP; p2=1.0_WP
         ! Set heat capacities corresponding to a normalized pre-shock
         Cv=(p1+Pinf)/(rho1*(Gamma-1.0_WP))
         ! Get reference temperature based on post-shock conditions
@@ -467,7 +473,7 @@ module simulation
          pmesh=partmesh(nvar=3,nvec=2,name='solid')
          pmesh%varname(1)='failfrac'
          pmesh%varname(2)='dilatation'
-         pmesh%varname(3)='flag'
+         pmesh%varname(3)='volume'
          pmesh%vecname(1)='velocity'
          pmesh%vecname(2)='bond_force'
          call ls%update_partmesh(pmesh)
@@ -483,7 +489,7 @@ module simulation
                pmesh%var(1,i)=0.0_WP
             end if
             pmesh%var(2,i)  =ls%p(i)%dil
-            pmesh%var(3,i)  =ls%p(i)%flag
+            pmesh%var(3,i)  =ls%p(i)%vol
             pmesh%vec(:,1,i)=ls%p(i)%vel
             pmesh%vec(:,2,i)=ls%p(i)%Abond
          end do
@@ -718,7 +724,7 @@ module simulation
                     pmesh%var(1,i)=0.0_WP
                  end if
                  pmesh%var(2,i)  =ls%p(i)%dil
-                 pmesh%var(3,i)  =ls%p(i)%flag
+                 pmesh%var(3,i)  =ls%p(i)%vol
                  pmesh%vec(:,1,i)=ls%p(i)%vel
                  pmesh%vec(:,2,i)=ls%p(i)%Abond
               end do

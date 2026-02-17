@@ -21,7 +21,7 @@ Particle file : cylinder.part
 Particle timestep size : 1e-3
 Elastic Modulus : 1000
 Poisson Ratio : 0.25
-Solid density : 2000
+Solid density : 100
 Critical Energy Release Rate : 0.01
 
 # Time integration

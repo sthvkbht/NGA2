@@ -452,11 +452,11 @@ contains
          ! Recompute a few physical parameters
          mu=this%elastic_modulus/(2.0_WP+2.0_WP*this%poisson_ratio)
          kk=this%elastic_modulus/(3.0_WP-6.0_WP*this%poisson_ratio)
-         !if (is2D) then
-         !   max_stretch=sqrt(this%crit_energy/((6.0_WP*mu/Pi+16.0_WP/(9.0_WP*Pi**2)(kk-2.0_WP*mu))*this%delta))
-         !else
+         if (is2D) then
+            max_stretch=sqrt(this%crit_energy/((6.0_WP*mu/Pi+16.0_WP/(9.0_WP*Pi**2)*(kk-2.0_WP*mu))*this%delta))
+         else
             max_stretch=sqrt(this%crit_energy/((3.0_WP*mu+(kk-5.0_WP*mu/3.0_WP)*0.75_WP**4)*this%delta))
-         !end if
+         end if
          nc=1.0_WP
          kc=15.0_WP*12.0_WP*this%elastic_modulus/(Pi*this%delta**4)
          this%min_dist=huge(1.0_WP)
