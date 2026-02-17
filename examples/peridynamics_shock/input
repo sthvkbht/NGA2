@@ -9,9 +9,6 @@ nx :	400
 ny :	240
 nz :	1
 
-# Case definition
-Cylinder radius : 0.5
-
 # Adimensional flow parameters
 Gamma : 1.4
 Prandtl number : 0.71

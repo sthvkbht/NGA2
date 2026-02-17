@@ -301,57 +301,6 @@ module simulation
       end block allocate_work_arrays
 
 
-      ! Initialize eos and flow parameters
-      initialize_parameters: block
-        use string,   only: str_long
-        use messager, only: log
-        use param,    only: param_read
-        character(str_long) :: message
-        ! Set Pinf to zero
-        Pinf=0.0_WP
-        ! Read in Gamma
-        call param_read('Gamma',Gamma)
-        ! Read in Prandtl number
-        call param_read('Prandtl number',Prandtl)
-        ! Read in shock Mach number and location
-        call param_read('Shock Mach number',Ms)
-        call param_read('Shock location',Xs)
-        ! First generate static shock with normalized pre-shock conditions
-        M1=Ms
-        rho1=1.0_WP
-        rho2=rho1*(Gamma+1.0_WP)*M1**2/((Gamma-1.0_WP)*M1**2+2.0_WP)
-        p1=0.25_WP*rho1/Gamma*((Gamma+1.0_WP)*M1/(M1**2-1.0_WP))**2 ! Ensures that |u2-u1|=1
-        p2=p1*(2.0_WP*Gamma/(Gamma+1.0_WP)*(M1**2-1.0_WP)+1.0_WP)
-        u1=M1*sqrt(Gamma*p1/rho1)
-        u2=u1*rho1/rho2
-        ! Now shift frame of reference to obtain moving shock
-        u2=abs(u2-u1); M2=u2/sqrt(Gamma*p2/rho2); u1=0.0_WP; M1=u1/sqrt(Gamma*p1/rho1)
-        ! Set heat capacities corresponding to a normalized pre-shock
-        Cv=(p1+Pinf)/(rho1*(Gamma-1.0_WP))
-        ! Get reference temperature based on post-shock conditions
-        T0=get_T(rho2,p2)
-        ! Define viscosity based on post-shock Reynolds number
-        call param_read('Cylinder radius',Rcyl)
-        call param_read('Reynolds number',Re); visc0=rho2*2.0_WP*Rcyl*u2/Re
-        ! Output case info
-        if (cfg%amRoot) then
-           write(message,'("[Gas EOS]               =>  Gamma=",es12.5)')    Gamma; call log(message)
-           write(message,'("[Gas EOS]               =>     Cv=",es12.5)')       Cv; call log(message)
-           write(message,'("[Shock Mach number]     =>     Ms=",es12.5)')       Ms; call log(message)
-           write(message,'("[Pre -shock conditions] =>   rho1=",es12.5)')     rho1; call log(message)
-           write(message,'("[Pre -shock conditions] =>     p1=",es12.5)')       p1; call log(message)
-           write(message,'("[Pre -shock conditions] =>     u1=",es12.5)')       u1; call log(message)
-           write(message,'("[Pre -shock conditions] =>     M1=",es12.5)')       M1; call log(message)
-           write(message,'("[Post-shock conditions] =>   rho2=",es12.5)')     rho2; call log(message)
-           write(message,'("[Post-shock conditions] =>     p2=",es12.5)')       p2; call log(message)
-           write(message,'("[Post-shock conditions] =>     u2=",es12.5)')       u2; call log(message)
-           write(message,'("[Post-shock conditions] =>     M2=",es12.5)')       M2; call log(message)
-           write(message,'("[Gas Reynolds]          =>     Re=",es12.5)')       Re; call log(message)
-           write(message,'("[Gas viscosity]         =>     mu=",es12.5)')    visc0; call log(message)
-        end if
-      end block initialize_parameters
-
-
       ! Initialize time tracker with 2 subiterations
       initialize_timetracker: block
         time=timetracker(amRoot=cfg%amRoot)
@@ -365,9 +314,9 @@ module simulation
 
       ! Initialize Lagrangian solid solver
       initialize_lss: block
-         real(WP) :: dx,mu,kk,max_stretch,Lx,Ly,Lz
+         real(WP) :: mu,kk,max_stretch,Lx,Ly,Lz,dz
          real(WP) :: xmin,xmax,ymin,ymax,zmin,zmax
-         integer :: np,nt
+         integer :: np
          type triangle_type
             real(WP), dimension(3) :: norm
             real(WP), dimension(3) :: v1
@@ -402,16 +351,21 @@ module simulation
          if (ls%cfg%amRoot) then
             ! Read the STL file and get domain extents and levelset
             read_bin: block
+              use mathtools, only: Pi
               use messager, only: die
               integer :: p,iunit,ierr
               character(len=80) :: partfile
+              real(WP) :: area
               call param_read('Particle file',partfile)
               open(newunit=iunit,file=trim(partfile),access="stream",form="unformatted",action="read",status="old",iostat=ierr)
               if(ierr.ne.0) call die('[read_stl] Could not open file: '//trim(partfile))
               read(iunit) np
               call ls%resize(np)
+              area=0.0_WP
               do p=1,np
+                 ! Read in position and volume
                  read(iunit) ls%p(p)%pos(1), ls%p(p)%pos(2), ls%p(p)%pos(3), ls%p(p)%vol
+                 area=area+ls%p(p)%vol
                  ! Set object id and velocity
                  ls%p(p)%id=-2
                  ls%p(p)%vel=0.0_WP
@@ -424,6 +378,7 @@ module simulation
                  ! Activate the particle
                  ls%p(p)%flag=0
               end do
+              Rcyl=sqrt(area/Pi)
               close(iunit)
             end block read_bin
          end if
@@ -440,10 +395,61 @@ module simulation
          if (ls%cfg%amRoot) then
             print*,"===== Solid Setup Description ====="
             print*,'Number of particles', np
-            print*,'Maximum stretching =',max_stretch
+            print*,'Maximum stretching',max_stretch
+            print*,'Min particle spacing',ls%min_dist
          end if
          
       end block initialize_lss
+
+
+      ! Initialize eos and flow parameters
+      initialize_parameters: block
+        use string,   only: str_long
+        use messager, only: log
+        use param,    only: param_read
+        character(str_long) :: message
+        ! Set Pinf to zero
+        Pinf=0.0_WP
+        ! Read in Gamma
+        call param_read('Gamma',Gamma)
+        ! Read in Prandtl number
+        call param_read('Prandtl number',Prandtl)
+        ! Read in shock Mach number and location
+        call param_read('Shock Mach number',Ms)
+        call param_read('Shock location',Xs)
+        ! First generate static shock with normalized pre-shock conditions
+        M1=Ms
+        rho1=1.0_WP
+        rho2=rho1*(Gamma+1.0_WP)*M1**2/((Gamma-1.0_WP)*M1**2+2.0_WP)
+        p1=0.25_WP*rho1/Gamma*((Gamma+1.0_WP)*M1/(M1**2-1.0_WP))**2 ! Ensures that |u2-u1|=1
+        p2=p1*(2.0_WP*Gamma/(Gamma+1.0_WP)*(M1**2-1.0_WP)+1.0_WP)
+        u1=M1*sqrt(Gamma*p1/rho1)
+        u2=u1*rho1/rho2
+        ! Now shift frame of reference to obtain moving shock
+        u2=abs(u2-u1); M2=u2/sqrt(Gamma*p2/rho2); u1=0.0_WP; M1=u1/sqrt(Gamma*p1/rho1)
+        ! Set heat capacities corresponding to a normalized pre-shock
+        Cv=(p1+Pinf)/(rho1*(Gamma-1.0_WP))
+        ! Get reference temperature based on post-shock conditions
+        T0=get_T(rho2,p2)
+        ! Define viscosity based on post-shock Reynolds number
+        call param_read('Reynolds number',Re); visc0=rho2*2.0_WP*Rcyl*u2/Re
+        ! Output case info
+        if (cfg%amRoot) then
+           write(message,'("[Gas EOS]               =>  Gamma=",es12.5)')    Gamma; call log(message)
+           write(message,'("[Gas EOS]               =>     Cv=",es12.5)')       Cv; call log(message)
+           write(message,'("[Shock Mach number]     =>     Ms=",es12.5)')       Ms; call log(message)
+           write(message,'("[Pre -shock conditions] =>   rho1=",es12.5)')     rho1; call log(message)
+           write(message,'("[Pre -shock conditions] =>     p1=",es12.5)')       p1; call log(message)
+           write(message,'("[Pre -shock conditions] =>     u1=",es12.5)')       u1; call log(message)
+           write(message,'("[Pre -shock conditions] =>     M1=",es12.5)')       M1; call log(message)
+           write(message,'("[Post-shock conditions] =>   rho2=",es12.5)')     rho2; call log(message)
+           write(message,'("[Post-shock conditions] =>     p2=",es12.5)')       p2; call log(message)
+           write(message,'("[Post-shock conditions] =>     u2=",es12.5)')       u2; call log(message)
+           write(message,'("[Post-shock conditions] =>     M2=",es12.5)')       M2; call log(message)
+           write(message,'("[Gas Reynolds]          =>     Re=",es12.5)')       Re; call log(message)
+           write(message,'("[Gas viscosity]         =>     mu=",es12.5)')    visc0; call log(message)
+        end if
+      end block initialize_parameters
 
 
      ! Create partmesh object for visualizing Lagrangian particles
@@ -619,8 +625,7 @@ module simulation
       do while (.not.time%done())
 
          ! Increment time
-         call ls%get_cfl(time%dt,time%cfl)
-         call fs%get_cfl(time%dt,cfl); time%cfl=max(time%cfl,cfl)
+         call fs%get_cfl(time%dt,time%cfl)
          call time%adjust_dt()
          call time%increment()
 

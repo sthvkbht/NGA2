@@ -257,12 +257,15 @@ contains
       
       ! Establish initial bonds
       create_bonds: block
+         use mpi_f08,  only: MPI_ALLREDUCE,MPI_MIN,MPI_IN_PLACE
+         use parallel, only: MPI_REAL_WP
          use mathtools, only: Pi
-         integer :: i,j,k,n1,nn,n2
+         integer :: i,j,k,n1,nn,n2,ierr
          type(part) :: p1,p2
          real(WP), dimension(3) :: rpos
          real(WP) :: dist
-       
+         ! Reset minimum bond distance
+         this%min_dist=huge(1.0_WP)
          ! Loop over particles
          do n1=1,this%np_
             ! Create copy of our particle
@@ -292,6 +295,7 @@ contains
                         ! Check interparticle distance
                         rpos=p2%pos-p1%pos
                         dist=sqrt(dot_product(rpos,rpos))
+                        this%min_dist=min(this%min_dist,dist)
                         if (dist.lt.this%delta) then
                            ! This particle is in horizon, create a bond
                            p1%nbond=p1%nbond+1
@@ -309,8 +313,9 @@ contains
             p1%dil=0.0_WP
             ! Copy back the particle
             this%p(n1)=p1
-
          end do
+         ! Get global minimum
+         call MPI_ALLREDUCE(MPI_IN_PLACE,this%min_dist,1,MPI_REAL_WP,MPI_MIN,this%cfg%comm,ierr)
       end block create_bonds
       
       ! Clean up
@@ -375,16 +380,11 @@ contains
       
       ! Update weighted volume and dilatation
       update_weighted_vol_and_dilatation: block
-        use mpi_f08,  only: MPI_ALLREDUCE,MPI_MIN,MPI_IN_PLACE
-        use parallel, only: MPI_REAL_WP
-         integer :: i,j,k,n1,nn,n2,ierr
+         integer :: i,j,k,n1,nn,n2
          type(part) :: p1,p2
          integer :: nb,nbond
          real(WP), dimension(3) :: rpos
          real(WP) :: dist
-
-         ! Reset minimum bond distance
-         this%min_dist=huge(1.0_WP)
          
          ! Loop over particles
          do n1=1,this%np_
@@ -414,7 +414,6 @@ contains
                               ! Get current distance
                               rpos=p2%pos-p1%pos
                               dist=sqrt(dot_product(rpos,rpos))
-                              this%min_dist=min(this%min_dist,dist)
                               ! Increment dilatation
                               p1%dil=p1%dil+wgauss(p1%dbond(nb),this%delta)*p1%dbond(nb)*(dist-p1%dbond(nb))*p1%vol
                            end if
@@ -428,9 +427,6 @@ contains
             ! Copy back the particle
             this%p(n1)=p1
          end do
-
-         ! Get global minimum
-         call MPI_ALLREDUCE(MPI_IN_PLACE,this%min_dist,1,MPI_REAL_WP,MPI_MIN,this%cfg%comm,ierr)
          
       end block update_weighted_vol_and_dilatation
       
@@ -558,7 +554,7 @@ contains
       this%np_out=0
 
       ! Calculate bond force
-      call this%get_bond_force()
+      !call this%get_bond_force()
 
       ! Advance in time
       do i=1,this%np_
