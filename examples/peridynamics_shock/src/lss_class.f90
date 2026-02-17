@@ -453,10 +453,10 @@ contains
          mu=this%elastic_modulus/(2.0_WP+2.0_WP*this%poisson_ratio)
          kk=this%elastic_modulus/(3.0_WP-6.0_WP*this%poisson_ratio)
          if (is2D) then
-            max_stretch=sqrt(this%crit_energy/((6.0_WP*mu/Pi+16.0_WP/(9.0_WP*Pi**2)*(kk-2.0_WP*mu))*this%delta))
             if (this%cfg%nx.eq.1) t=this%cfg%xL
             if (this%cfg%ny.eq.1) t=this%cfg%yL
             if (this%cfg%nz.eq.1) t=this%cfg%zL
+            max_stretch=sqrt(this%crit_energy/((6.0_WP*mu/Pi+16.0_WP/(9.0_WP*Pi**2)*(kk-2.0_WP*mu))*this%delta))
             kc=15.0_WP*48.0_WP*this%elastic_modulus/(Pi*5.0_WP*t*this%delta**3)
          else
             max_stretch=sqrt(this%crit_energy/((3.0_WP*mu+(kk-5.0_WP*mu/3.0_WP)*0.75_WP**4)*this%delta))
@@ -464,7 +464,6 @@ contains
          end if
          nc=1.0_WP
          this%min_dist=huge(1.0_WP)
-         
          ! Loop over particles
          do n1=1,this%np_
             ! Particles marked 0 do not update their forces
@@ -585,7 +584,7 @@ contains
       this%np_out=0
 
       ! Calculate bond force
-      !call this%get_bond_force()
+      call this%get_bond_force()
 
       ! Advance in time
       do i=1,this%np_
