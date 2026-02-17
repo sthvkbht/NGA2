@@ -292,7 +292,6 @@ contains
                         ! Check interparticle distance
                         rpos=p2%pos-p1%pos
                         dist=sqrt(dot_product(rpos,rpos))
-                        this%min_dist=min(this%min_dist,dist)
                         if (dist.lt.this%delta) then
                            ! This particle is in horizon, create a bond
                            p1%nbond=p1%nbond+1
@@ -301,6 +300,8 @@ contains
                            p1%dbond(p1%nbond)=dist
                            ! Increment weighted volume
                            p1%mw=p1%mw+wgauss(dist,this%delta)*dist**2*p1%vol
+                           ! Determine minimum bond distance
+                           this%min_dist=min(this%min_dist,dist)
                         end if
                      end do
                   end do
@@ -328,9 +329,10 @@ contains
       class(lss), intent(inout) :: this
       integer, dimension(:,:,:),   allocatable :: npic    !< Number of particle in cell
       integer, dimension(:,:,:,:), allocatable :: ipic    !< Index of particle in cell
+      logical :: is2D
 
-      ! Needs to be fixed for 2D
-      if (this%cfg%nx.eq.1.or.this%cfg%ny.eq.1.or.this%cfg%nz.eq.1) return
+      ! Need to modify parameters in 2D
+      is2D=this%cfg%nx.eq.1.or.this%cfg%ny.eq.1.or.this%cfg%nz.eq.1
       
       ! Communicate particles in ghost cells
       call this%share()
@@ -382,7 +384,6 @@ contains
          integer :: nb,nbond
          real(WP), dimension(3) :: rpos
          real(WP) :: dist
-         
          ! Loop over particles
          do n1=1,this%np_
             ! Create copy of our particle
@@ -407,12 +408,12 @@ contains
                         do nb=1,max_bond
                            if (p1%ibond(nb).eq.p2%i) then
                               ! Increment weighted volume
-                              p1%mw=p1%mw+wgauss(p1%dbond(nb),this%delta)*p1%dbond(nb)**2*p1%vol
+                              p1%mw=p1%mw+wgauss(p1%dbond(nb),this%delta)*p1%dbond(nb)**2*p2%vol
                               ! Get current distance
                               rpos=p2%pos-p1%pos
                               dist=sqrt(dot_product(rpos,rpos))
                               ! Increment dilatation
-                              p1%dil=p1%dil+wgauss(p1%dbond(nb),this%delta)*p1%dbond(nb)*(dist-p1%dbond(nb))*p1%vol
+                              p1%dil=p1%dil+wgauss(p1%dbond(nb),this%delta)*p1%dbond(nb)*(dist-p1%dbond(nb))*p2%vol
                            end if
                         end do
                      end do
@@ -420,11 +421,16 @@ contains
                end do
             end do
             ! Rescale dilatation
-            p1%dil=p1%dil*3.0_WP/p1%mw
+            if (is2D) then
+               ! 2D plane strain
+               p1%dil=p1%dil*2.0_WP/p1%mw
+            else
+               ! 3D
+               p1%dil=p1%dil*3.0_WP/p1%mw
+            end if
             ! Copy back the particle
             this%p(n1)=p1
          end do
-         
       end block update_weighted_vol_and_dilatation
       
       ! Re-communicate particles in ghost cells to update dil and mw
@@ -432,8 +438,10 @@ contains
       
       ! Update bond force, including collision force
       update_bond_force: block
+         use mpi_f08,  only: MPI_ALLREDUCE,MPI_MIN,MPI_IN_PLACE
+         use parallel, only: MPI_REAL_WP
          use mathtools, only: Pi
-         integer :: i,j,k,n1,nn,n2
+         integer :: i,j,k,n1,nn,n2,ierr
          type(part) :: p1,p2
          real(WP), dimension(3) :: rpos,t12,t21
          real(WP) :: dist,beta,alpha,ed
@@ -441,14 +449,17 @@ contains
          real(WP) :: nc,rc,kc
          integer :: nb,nbond
          logical :: found_bond
-         
          ! Recompute a few physical parameters
          mu=this%elastic_modulus/(2.0_WP+2.0_WP*this%poisson_ratio)
          kk=this%elastic_modulus/(3.0_WP-6.0_WP*this%poisson_ratio)
-         max_stretch=sqrt(this%crit_energy/((3.0_WP*mu+(kk-5.0_WP*mu/3.0_WP)*0.75_WP**4)*this%delta))
-         ! rc=this%dV**(1.0_WP/3.0_WP)
+         !if (is2D) then
+         !   max_stretch=sqrt(this%crit_energy/((6.0_WP*mu/Pi+16.0_WP/(9.0_WP*Pi**2)(kk-2.0_WP*mu))*this%delta))
+         !else
+            max_stretch=sqrt(this%crit_energy/((3.0_WP*mu+(kk-5.0_WP*mu/3.0_WP)*0.75_WP**4)*this%delta))
+         !end if
          nc=1.0_WP
          kc=15.0_WP*12.0_WP*this%elastic_modulus/(Pi*this%delta**4)
+         this%min_dist=huge(1.0_WP)
          
          ! Loop over particles
          do n1=1,this%np_
@@ -484,34 +495,51 @@ contains
                                  ! Remove the bond and flag as surface particle
                                  p1%ibond(nb)=0
                                  p1%dbond(nb)=0.0_WP
-                                 
                                  cycle
                               end if
-                              ! Beta1
-                              beta=3.0_WP*kk*p1%dil
-                              ! Alpha1
-                              alpha=15.0_WP*mu/p1%mw
-                              ! Extension1
-                              ed=dist-p1%dbond(nb)*(1.0_WP+p1%dil/3.0_WP)
+                              ! Particle 1
+                              if (is2D) then
+                                 ! 2D plane strain
+                                 beta  = 2.0_WP * kk * p1%dil
+                                 alpha = 8.0_WP * mu / p1%mw
+                                 ed    = dist - p1%dbond(nb) * (1.0_WP + p1%dil / 2.0_WP)
+                              else
+                                 ! 3D
+                                 beta  = 3.0_WP * kk * p1%dil
+                                 alpha = 15.0_WP * mu / p1%mw
+                                 ed    = dist - p1%dbond(nb) * (1.0_WP + p1%dil / 3.0_WP)
+                              end if
                               ! Force density 1->2
                               t12=+wgauss(p1%dbond(nb),this%delta)*(beta/p1%mw*p1%dbond(nb)+alpha*ed)*rpos/dist
-                              ! Beta2
-                              beta=3.0_WP*kk*p2%dil
-                              ! Alpha2
-                              alpha=15.0_WP*mu/p2%mw
-                              ! Extension2
-                              ed=dist-p1%dbond(nb)*(1.0_WP+p2%dil/3.0_WP)
+                              ! Particle 2
+                              if (is2D) then
+                                 ! 2D plane strain
+                                 beta  = 2.0_WP * kk * p2%dil
+                                 alpha = 8.0_WP * mu / p2%mw
+                                 ed    = dist - p1%dbond(nb) * (1.0_WP + p2%dil / 2.0_WP)
+                              else
+                                 ! 3D
+                                 beta  = 3.0_WP * kk * p2%dil
+                                 alpha = 15.0_WP * mu / p2%mw
+                                 ed    = dist - p1%dbond(nb) * (1.0_WP + p2%dil / 3.0_WP)
+                              end if
                               ! Force density 2->1
                               t21=-wgauss(p1%dbond(nb),this%delta)*(beta/p2%mw*p1%dbond(nb)+alpha*ed)*rpos/dist
                               ! Increment bond force
                               p1%Abond=p1%Abond+(t12-t21)*p1%vol/this%rho
                               ! If still here, we have an active bond
                               found_bond=.true.
+                              ! Determine minimum bond distance
+                              this%min_dist=min(this%min_dist,dist)
                               cycle
                            end if
                         end do
                         ! Add collision force now
-                        rc=p1%vol**(1.0_WP/3.0_WP)
+                        if (is2D) then
+                           rc=p1%vol**(1.0_WP/2.0_WP)
+                        else
+                           rc=p1%vol**(1.0_WP/3.0_WP)
+                        end if
                         if (.not.found_bond.and.p1%i.ne.p2%i.and.dist.lt.rc) then
                            p1%Abond=p1%Abond-kc*((rc/dist)**nc-1.0_WP)*(rpos/dist)*p1%vol/this%rho
                         end if
@@ -522,6 +550,8 @@ contains
             ! Copy back the particle
             this%p(n1)=p1
          end do
+         ! Get global minimum
+         call MPI_ALLREDUCE(MPI_IN_PLACE,this%min_dist,1,MPI_REAL_WP,MPI_MIN,this%cfg%comm,ierr)
       end block update_bond_force
       
       ! Clean up

@@ -348,14 +348,16 @@ module simulation
          max_stretch=sqrt(ls%crit_energy/((3.0_WP*mu+(kk-5.0_WP*mu/3.0_WP)*0.75_WP**4)*ls%delta))
          
          ! Only root process initializes solid particles
-         if (ls%cfg%amRoot) then
-            ! Read the STL file and get domain extents and levelset
-            read_bin: block
-              use mathtools, only: Pi
-              use messager, only: die
-              integer :: p,iunit,ierr
-              character(len=80) :: partfile
-              real(WP) :: vol_tot
+         ! Read the STL file and get domain extents and levelset
+         read_bin: block
+           use mpi_f08,   only: MPI_BCAST
+           use parallel,  only: MPI_REAL_WP
+           use mathtools, only: Pi
+           use messager, only: die
+           integer :: p,iunit,ierr
+           character(len=80) :: partfile
+           real(WP) :: vol_tot
+           if (ls%cfg%amRoot) then
               call param_read('Particle file',partfile)
               open(newunit=iunit,file=trim(partfile),access="stream",form="unformatted",action="read",status="old",iostat=ierr)
               if(ierr.ne.0) call die('[read_stl] Could not open file: '//trim(partfile))
@@ -367,7 +369,7 @@ module simulation
                  read(iunit) ls%p(p)%pos(1), ls%p(p)%pos(2), ls%p(p)%pos(3), ls%p(p)%vol
                  vol_tot=vol_tot+ls%p(p)%vol
                  ! Set object id and velocity
-                 ls%p(p)%id=-2
+                 ls%p(p)%id=1
                  ls%p(p)%vel=0.0_WP
                  ! Zero out force
                  ls%p(p)%Abond=0.0_WP
@@ -384,9 +386,11 @@ module simulation
                  Rcyl=(0.75_WP*vol_tot/Pi)**(1.0_WP/3.0_WP)
               end if
               close(iunit)
-            end block read_bin
-         end if
-      
+           end if
+           ! Communicate radius
+           call MPI_BCAST(Rcyl,1,MPI_REAL_WP,0,cfg%comm,ierr)
+         end block read_bin
+
          ! Communicate particles
          call ls%sync()
 
