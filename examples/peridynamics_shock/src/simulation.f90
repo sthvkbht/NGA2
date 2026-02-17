@@ -355,17 +355,17 @@ module simulation
               use messager, only: die
               integer :: p,iunit,ierr
               character(len=80) :: partfile
-              real(WP) :: area
+              real(WP) :: vol_tot
               call param_read('Particle file',partfile)
               open(newunit=iunit,file=trim(partfile),access="stream",form="unformatted",action="read",status="old",iostat=ierr)
               if(ierr.ne.0) call die('[read_stl] Could not open file: '//trim(partfile))
               read(iunit) np
               call ls%resize(np)
-              area=0.0_WP
+              vol_tot=0.0_WP
               do p=1,np
                  ! Read in position and volume
                  read(iunit) ls%p(p)%pos(1), ls%p(p)%pos(2), ls%p(p)%pos(3), ls%p(p)%vol
-                 area=area+ls%p(p)%vol
+                 vol_tot=vol_tot+ls%p(p)%vol
                  ! Set object id and velocity
                  ls%p(p)%id=-2
                  ls%p(p)%vel=0.0_WP
@@ -378,7 +378,11 @@ module simulation
                  ! Activate the particle
                  ls%p(p)%flag=0
               end do
-              Rcyl=sqrt(area/Pi)
+              if (fs%cfg%nx.eq.1.or.fs%cfg%ny.eq.1.or.fs%cfg%nz.eq.1) then
+                 Rcyl=sqrt(vol_tot/Pi)
+              else
+                 Rcyl=(0.75_WP*vol_tot/Pi)**(1.0_WP/3.0_WP)
+              end if
               close(iunit)
             end block read_bin
          end if
