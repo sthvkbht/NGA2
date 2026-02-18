@@ -18,11 +18,11 @@ Reynolds number : 5000
 
 # Solid properties
 Particle file : cylinder.part
-Particle timestep size : 1e-3
+Particle timestep size : 5e-4
 Elastic Modulus : 1000
 Poisson Ratio : 0.25
 Solid density : 100
-Critical Energy Release Rate : 0.01
+Critical Energy Release Rate : 1
 
 # Time integration
 Max timestep size : 2e-3

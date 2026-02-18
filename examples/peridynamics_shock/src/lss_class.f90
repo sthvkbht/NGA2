@@ -550,6 +550,10 @@ contains
                   end do
                end do
             end do
+            ! Deal with dimensionality
+            if (this%cfg%nx.eq.1) p1%Abond(1)=0.0_WP
+            if (this%cfg%ny.eq.1) p1%Abond(2)=0.0_WP
+            if (this%cfg%nz.eq.1) p1%Abond(3)=0.0_WP
             ! Copy back the particle
             this%p(n1)=p1
          end do
