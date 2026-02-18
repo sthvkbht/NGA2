@@ -421,17 +421,21 @@ contains
                end do
             end do
             ! Rescale dilatation
-            if (is2D) then
-               ! 2D plane strain
-               p1%dil=p1%dil*2.0_WP/p1%mw
+            if (p1%mw.gt.epsilon(1.0_WP)) then
+               if (is2D) then
+                  ! 2D plane strain
+                  p1%dil=p1%dil*2.0_WP/p1%mw
+               else
+                  ! 3D
+                  p1%dil=p1%dil*3.0_WP/p1%mw
+               end if
             else
-               ! 3D
-               p1%dil=p1%dil*3.0_WP/p1%mw
+               p1%dil=0.0_WP
             end if
             ! Copy back the particle
             this%p(n1)=p1
          end do
-      end block update_weighted_vol_and_dilatation
+       end block update_weighted_vol_and_dilatation
       
       ! Re-communicate particles in ghost cells to update dil and mw
       call this%share()
@@ -800,7 +804,7 @@ contains
       real(WP), intent(in)  :: dt
       real(WP), intent(out) :: cfl
       integer :: i,ierr
-      real(WP) :: my_CFLp_x,my_CFLp_y,my_CFLp_z
+      real(WP) :: my_CFLp_x,my_CFLp_y,my_CFLp_z,kk,mu,c_pd
       
       ! Set the CFLs to zero
       my_CFLp_x=0.0_WP; my_CFLp_y=0.0_WP; my_CFLp_z=0.0_WP
@@ -816,8 +820,13 @@ contains
       call MPI_ALLREDUCE(my_CFLp_y,this%CFLp_y,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
       call MPI_ALLREDUCE(my_CFLp_z,this%CFLp_z,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
 
-      ! CFL based on speed of sound in material
-      this%CFLp_a=dt/this%min_dist*sqrt(this%elastic_modulus/this%rho)
+      ! CFL based on acoustic wave speed in material
+      kk=this%elastic_modulus/(3.0_WP-6.0_WP*this%poisson_ratio)
+      mu=this%elastic_modulus/(2.0_WP+2.0_WP*this%poisson_ratio)      
+      c_pd=sqrt((kk+4.0_WP*mu/3.0_WP)/this%rho)
+      c_pd=max(c_pd,sqrt(this%elastic_modulus/this%rho))
+      this%CFLp_a=dt*c_pd/this%delta
+      !this%CFLp_a=dt/this%min_dist*sqrt(this%elastic_modulus/this%rho)
       
       ! Return the maximum CFL
       cfl=max(this%CFLp_x,this%CFLp_y,this%CFLp_z,this%CFLp_a)
