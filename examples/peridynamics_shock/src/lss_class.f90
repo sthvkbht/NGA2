@@ -36,7 +36,7 @@ module lss_class
       real(WP), dimension(3) :: pos          !< Particle center coordinates
       real(WP), dimension(3) :: vel          !< Velocity of particle
       real(WP), dimension(3) :: Abond        !< Bond acceleration for particle
-      real(WP), dimension(3) :: drag         !< Fluid force from IBM
+      real(WP), dimension(3) :: Afluid       !< Fluid acceleration for particle
       !> MPI_INTEGER data
       integer :: id                          !< ID the object is associated with
       integer :: i                           !< Unique index of particle (assumed >0)
@@ -585,46 +585,50 @@ contains
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_x  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_y  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_z  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-      integer :: i,j,k,ierr
-      real(WP), dimension(3) :: stress,acc,dxdt,dudt
-      
-      ! Zero out number of particles removed
+      integer :: n,ierr
+      real(WP), dimension(3) :: stress
+
+       ! Zero out number of particles removed
       this%np_out=0
-
-      ! Calculate bond force
-      call this%get_bond_force()
-
-      ! Advance in time
-      do i=1,this%np_
-         if (this%p(i)%id.eq.0) cycle
-         ! Interpolate fluid stress to particle
-         stress=this%cfg%get_velocity(pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),U=stress_x,V=stress_y,W=stress_z)
-         ! Get right-hand side terms
-         this%p(i)%drag=stress*this%p(i)%vol
-         acc=stress/this%rho
-         dxdt=this%p(i)%vel
-         dudt=this%gravity+this%p(i)%Abond+acc           
-         ! Update particle position
-         if (this%p(i)%id.gt.-2) this%p(i)%pos = this%p(i)%pos + dt*dxdt
-         ! Update particle velocity
-         if (this%p(i)%id.gt.-1) this%p(i)%vel = this%p(i)%vel + dt*dudt
+      
+      ! Advance velocity based on old force and position based on mid-velocity
+      do n=1,this%np_
+         ! Advance with Verlet scheme
+         if (this%p(n)%id.gt.-1) this%p(n)%vel=this%p(n)%vel+0.5_WP*dt*(this%gravity+this%p(n)%Abond+this%p(n)%Afluid)
+         if (this%p(n)%id.gt.-2) this%p(n)%pos=this%p(n)%pos+dt*this%p(n)%vel
+         ! Relocalize
+         this%p(n)%ind=this%cfg%get_ijk_global(this%p(n)%pos,this%p(n)%ind)
          ! Correct the position to take into account periodicity
-         if (this%cfg%xper) this%p(i)%pos(1)=this%cfg%x(this%cfg%imin)+modulo(this%p(i)%pos(1)-this%cfg%x(this%cfg%imin),this%cfg%xL)
-         if (this%cfg%yper) this%p(i)%pos(2)=this%cfg%y(this%cfg%jmin)+modulo(this%p(i)%pos(2)-this%cfg%y(this%cfg%jmin),this%cfg%yL)
-         if (this%cfg%zper) this%p(i)%pos(3)=this%cfg%z(this%cfg%kmin)+modulo(this%p(i)%pos(3)-this%cfg%z(this%cfg%kmin),this%cfg%zL)
+         if (this%cfg%xper) this%p(n)%pos(1)=this%cfg%x(this%cfg%imin)+modulo(this%p(n)%pos(1)-this%cfg%x(this%cfg%imin),this%cfg%xL)
+         if (this%cfg%yper) this%p(n)%pos(2)=this%cfg%y(this%cfg%jmin)+modulo(this%p(n)%pos(2)-this%cfg%y(this%cfg%jmin),this%cfg%yL)
+         if (this%cfg%zper) this%p(n)%pos(3)=this%cfg%z(this%cfg%kmin)+modulo(this%p(n)%pos(3)-this%cfg%z(this%cfg%kmin),this%cfg%zL)
          ! Handle particles that have left the domain
-         if (this%p(i)%pos(1).lt.this%cfg%x(this%cfg%imin).or.this%p(i)%pos(1).gt.this%cfg%x(this%cfg%imax+1)) this%p(i)%flag=1
-         if (this%p(i)%pos(2).lt.this%cfg%y(this%cfg%jmin).or.this%p(i)%pos(2).gt.this%cfg%y(this%cfg%jmax+1)) this%p(i)%flag=1
-         if (this%p(i)%pos(3).lt.this%cfg%z(this%cfg%kmin).or.this%p(i)%pos(3).gt.this%cfg%z(this%cfg%kmax+1)) this%p(i)%flag=1
+         if (this%p(n)%pos(1).lt.this%cfg%x(this%cfg%imin).or.this%p(n)%pos(1).gt.this%cfg%x(this%cfg%imax+1)) this%p(n)%flag=1
+         if (this%p(n)%pos(2).lt.this%cfg%y(this%cfg%jmin).or.this%p(n)%pos(2).gt.this%cfg%y(this%cfg%jmax+1)) this%p(n)%flag=1
+         if (this%p(n)%pos(3).lt.this%cfg%z(this%cfg%kmin).or.this%p(n)%pos(3).gt.this%cfg%z(this%cfg%kmax+1)) this%p(n)%flag=1
          ! Relocalize the particle
-         this%p(i)%ind=this%cfg%get_ijk_global(this%p(i)%pos,this%p(i)%ind)
+         this%p(n)%ind=this%cfg%get_ijk_global(this%p(n)%pos,this%p(n)%ind)
+         ! Count number of particles removed
+         if (this%p(n)%flag.eq.1) this%np_out=this%np_out+1
       end do
       
       ! Communicate particles
       call this%sync()
       
       ! Sum up particles removed
-      call MPI_ALLREDUCE(MPI_IN_PLACE,this%np_out,1,MPI_INTEGER,MPI_SUM,this%cfg%comm,ierr)
+      call MPI_ALLREDUCE(this%np_out,n,1,MPI_INTEGER,MPI_SUM,this%cfg%comm,ierr); this%np_out=n
+      
+      ! Calculate bond force
+      call this%get_bond_force()
+      
+      ! Advance velocity only based on new force
+      do n=1,this%np_
+         ! Advance with Verlet scheme
+         if (this%p(n)%id.le.-1) cycle
+         stress=this%cfg%get_velocity(pos=this%p(n)%pos,i0=this%p(n)%ind(1),j0=this%p(n)%ind(2),k0=this%p(n)%ind(3),U=stress_x,V=stress_y,W=stress_z)
+         this%p(n)%Afluid=stress/this%rho
+         this%p(n)%vel=this%p(n)%vel+0.5_WP*dt*(this%gravity+this%p(n)%Abond+this%p(n)%Afluid)
+      end do
       
       ! Recompute volume fraction
       call this%update_VF()
@@ -804,7 +808,7 @@ contains
       real(WP), intent(in)  :: dt
       real(WP), intent(out) :: cfl
       integer :: i,ierr
-      real(WP) :: my_CFLp_x,my_CFLp_y,my_CFLp_z,kk,mu,c_pd
+      real(WP) :: my_CFLp_x,my_CFLp_y,my_CFLp_z,kk,mu,a
       
       ! Set the CFLs to zero
       my_CFLp_x=0.0_WP; my_CFLp_y=0.0_WP; my_CFLp_z=0.0_WP
@@ -820,13 +824,11 @@ contains
       call MPI_ALLREDUCE(my_CFLp_y,this%CFLp_y,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
       call MPI_ALLREDUCE(my_CFLp_z,this%CFLp_z,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr)
 
-      ! CFL based on acoustic wave speed in material
+      ! CFL based on elastic wave speed in material
       kk=this%elastic_modulus/(3.0_WP-6.0_WP*this%poisson_ratio)
       mu=this%elastic_modulus/(2.0_WP+2.0_WP*this%poisson_ratio)      
-      c_pd=sqrt((kk+4.0_WP*mu/3.0_WP)/this%rho)
-      c_pd=max(c_pd,sqrt(this%elastic_modulus/this%rho))
-      this%CFLp_a=dt*c_pd/this%delta
-      !this%CFLp_a=dt/this%min_dist*sqrt(this%elastic_modulus/this%rho)
+      a=sqrt((kk+4.0_WP*mu/3.0_WP)/this%rho)
+      this%CFLp_a=dt*a/this%delta
       
       ! Return the maximum CFL
       cfl=max(this%CFLp_x,this%CFLp_y,this%CFLp_z,this%CFLp_a)
@@ -856,7 +858,7 @@ contains
          this%Umin=min(this%Umin,this%p(i)%vel(1)); this%Umax=max(this%Umax,this%p(i)%vel(1)); this%Umean=this%Umean+this%p(i)%vel(1)
          this%Vmin=min(this%Vmin,this%p(i)%vel(2)); this%Vmax=max(this%Vmax,this%p(i)%vel(2)); this%Vmean=this%Vmean+this%p(i)%vel(2)
          this%Wmin=min(this%Wmin,this%p(i)%vel(3)); this%Wmax=max(this%Wmax,this%p(i)%vel(3)); this%Wmean=this%Wmean+this%p(i)%vel(3)
-         this%ibmForce=this%ibmForce+this%p(i)%drag
+         this%ibmForce=this%ibmForce+this%p(i)%Afluid*this%p(i)%vol*this%rho
       end do
       call MPI_ALLREDUCE(this%Umin ,buf,1,MPI_REAL_WP,MPI_MIN,this%cfg%comm,ierr); this%Umin =buf
       call MPI_ALLREDUCE(this%Umax ,buf,1,MPI_REAL_WP,MPI_MAX,this%cfg%comm,ierr); this%Umax =buf

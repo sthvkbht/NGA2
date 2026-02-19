@@ -135,7 +135,7 @@ module simulation
    end subroutine get_div
 
 
-   !> Overwrite cosnerved variables using volume-of-solid IBM
+   !> Overwrite conserved variables using volume-of-solid IBM
    subroutine apply_ibm()
      implicit none
      integer :: i,j,k,ii,jj,kk
@@ -315,8 +315,7 @@ module simulation
       ! Initialize Lagrangian solid solver
       initialize_lss: block
          use mathtools, only: Pi
-         real(WP) :: mu,kk,max_stretch,Lx,Ly,Lz,dz
-         real(WP) :: xmin,xmax,ymin,ymax,zmin,zmax
+         real(WP) :: mu,kk,max_stretch,dx,theta
          integer :: np
          type triangle_type
             real(WP), dimension(3) :: norm
@@ -334,6 +333,7 @@ module simulation
          call param_read('Poisson Ratio',ls%poisson_ratio)
          call param_read('Solid density',ls%rho)
          call param_read('Critical Energy Release Rate',ls%crit_energy)
+         call param_read('Initial Solid Angle',theta,default=0.0_WP)
 
          ! Maximum timestep size used for particles
          call param_read('Particle timestep size',ls_dt_max,default=huge(1.0_WP))
@@ -341,7 +341,11 @@ module simulation
          ls_it=0
          
          ! Discretization
-         ls%delta=fs%cfg%min_meshsize
+         !ls%delta=fs%cfg%min_meshsize
+
+         ! Discretization
+         dx=fs%cfg%min_meshsize/3.0_WP
+         ls%delta=3.0_WP*dx
 
          ! Output some info on stretch
          mu=ls%elastic_modulus/(2.0_WP+2.0_WP*ls%poisson_ratio)
@@ -352,53 +356,67 @@ module simulation
             max_stretch=sqrt(ls%crit_energy/((3.0_WP*mu+(kk-5.0_WP*mu/3.0_WP)*0.75_WP**4)*ls%delta))
          end if
          
-         ! Only root process initializes solid particles
-         ! Read the STL file and get domain extents and levelset
-         read_bin: block
+         ! First object =====================
+         object1: block
            use mpi_f08,   only: MPI_BCAST
            use parallel,  only: MPI_REAL_WP
-           use messager, only: die
-           integer :: p,iunit,ierr
-           character(len=80) :: partfile
-           real(WP) :: t,vol_tot
+           integer :: i,j,k,nx,ny,nz,iunit,ierr
+           real(WP) :: Lx,Ly,Lz,xr,yr
+           real(WP), dimension(:), allocatable :: x,y,z
            if (ls%cfg%amRoot) then
-              t=1.0_WP
-              if (fs%cfg%nx.eq.1) t=fs%cfg%xL
-              if (fs%cfg%ny.eq.1) t=fs%cfg%yL
-              if (fs%cfg%nz.eq.1) t=fs%cfg%zL
-              call param_read('Particle file',partfile)
-              open(newunit=iunit,file=trim(partfile),access="stream",form="unformatted",action="read",status="old",iostat=ierr)
-              if(ierr.ne.0) call die('[read_stl] Could not open file: '//trim(partfile))
-              read(iunit) np
-              call ls%resize(np)
-              vol_tot=0.0_WP
-              do p=1,np
-                 ! Read in position and volume
-                 read(iunit) ls%p(p)%pos(1), ls%p(p)%pos(2), ls%p(p)%pos(3), ls%p(p)%vol
-                 ls%p(p)%vol=ls%p(p)%vol*t
-                 vol_tot=vol_tot+ls%p(p)%vol
-                 ! Set object id and velocity
-                 ls%p(p)%id=1
-                 ls%p(p)%vel=0.0_WP
-                 ! Zero out force
-                 ls%p(p)%Abond=0.0_WP
-                 ! Locate the particle on the mesh
-                 ls%p(p)%ind=ls%cfg%get_ijk_global(ls%p(p)%pos,[ls%cfg%imin,ls%cfg%jmin,ls%cfg%kmin])
-                 ! Assign a unique integer to particle
-                 ls%p(p)%i=p
-                 ! Activate the particle
-                 ls%p(p)%flag=0
+              ! Object size
+              Lx=0.5_WP; Ly=0.5_WP; Lz=0.5_WP
+              Rcyl=Lx
+              ! Create simple rectilinear grid
+              nx=int(Lx/dx)
+              ny=int(Ly/dx)
+              nz=int(Lz/dx)
+              allocate(x(1:nx),y(1:ny),z(1:nz))
+              do i=1,nx
+                 x(i)=real(i-1,WP)*dx+0.5_WP*dx
               end do
-              if (fs%cfg%nx.eq.1.or.fs%cfg%ny.eq.1.or.fs%cfg%nz.eq.1) then
-                 Rcyl=sqrt(vol_tot/t/Pi)
-              else
-                 Rcyl=(0.75_WP*vol_tot/Pi)**(1.0_WP/3.0_WP)
-              end if
-              close(iunit)
+              do j=1,ny
+                 y(j)=real(j-1,WP)*dx-0.5_WP*Ly+0.5_WP*dx
+              end do
+              do k=1,nz
+                 z(k)=real(k-1,WP)*dx-0.5_WP*Lz+0.5_WP*dx
+              end do
+              ! Set angle of cube
+              theta=theta*Pi/180.0_WP
+              ! Loop over mesh and create particles
+              np=0
+              do k=1,nz
+                 do j=1,ny
+                    do i=1,nx
+                       ! Increment particle
+                       np=np+1
+                       call ls%resize(np)
+                       ! Set position
+                       xr=x(i)*cos(theta)-y(j)*sin(theta)
+                       yr=x(i)*sin(theta)+y(j)*cos(theta)
+                       ls%p(np)%pos=[xr,yr,z(k)]
+                       ! Set object id and velocity
+                       ls%p(np)%id=1
+                       ls%p(np)%vel=0.0_WP
+                       ! Set object volume
+                       ls%p(np)%vol=dx**3
+                       ! Zero out force
+                       ls%p(np)%Abond=0.0_WP
+                       ls%p(np)%Afluid=0.0_WP
+                       ! Locate the particle on the mesh
+                       ls%p(np)%ind=ls%cfg%get_ijk_global(ls%p(np)%pos,[ls%cfg%imin,ls%cfg%jmin,ls%cfg%kmin])
+                       ! Assign a unique integer to particle
+                       ls%p(np)%i=np
+                       ! Activate the particle
+                       ls%p(np)%flag=0
+                    end do
+                 end do
+              end do
+              deallocate(x,y,z)
            end if
            ! Communicate radius
            call MPI_BCAST(Rcyl,1,MPI_REAL_WP,0,cfg%comm,ierr)
-         end block read_bin
+         end block object1
 
          ! Communicate particles
          call ls%sync()
@@ -528,6 +546,8 @@ module simulation
         Ma=sqrt(Ui**2+Vi**2+Wi**2)/fs%C
         ! Compute dilatation
         call get_div()
+        ! Compute viscosities
+        call prepare_viscosities()
       end block initialize_variables
 
 
