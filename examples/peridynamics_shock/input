@@ -9,25 +9,25 @@ nx :	200!400
 ny :	120!240
 nz :	60
 
+# Time integration
+Max timestep size : 1e-2
+Max cfl number :    0.9
+Max time :          100
+
 # Adimensional flow parameters
 Gamma : 1.4
 Prandtl number : 0.71
-Shock Mach number : 2.1
+Shock Mach number : 3
 Shock location :   -0.5
 Reynolds number : 5000
 
 # Solid properties
 Initial Solid Angle : 20
-Particle timestep size : 4e-3
-Elastic Modulus : 1000
+Particle timestep size : 1e-2
+Elastic Modulus : 20
 Poisson Ratio : 0.25
-Solid density : 100
-Critical Energy Release Rate : .05
-
-# Time integration
-Max timestep size : 8e-3
-Max cfl number :    0.9
-Max time :          100
+Solid density : 10
+Critical Energy Release Rate : .01
 
 # Ensight output
 Ensight output period :  0.1
