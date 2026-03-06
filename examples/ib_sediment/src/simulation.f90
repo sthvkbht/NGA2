@@ -221,9 +221,8 @@ contains
         call fs%interp_vel(Ui,Vi,Wi)
         ! Compute divergence
         call fs%get_div()
-        ! Store initial levelset (absent of particles)
-        Gib0=cfg%Gib
-        VF0=cfg%VF
+        ! Store initial levelset and VF (absent of particles)
+        Gib0=cfg%Gib; VF0=cfg%VF
       end block initialize_velocity
 
 
@@ -351,10 +350,11 @@ contains
               ! Remember the old particle
               pos_old=pos; vel_old=vel
               ! Advance with Euler prediction
+              !---------------------------------------------------
               call get_force()
               acc=force/mass+(1.0_WP-fs%rho/rhop)*fs%gravity
-              pos=pos_old+0.5_WP*time%dt*vel
-              vel=vel_old+0.5_WP*time%dt*acc
+              pos=pos_old+0.5_WP*time%dtmid*vel
+              vel=vel_old+0.5_WP*time%dtmid*acc
               ! Overwrite levelset and volume fraction
               do k=cfg%kmino_,cfg%kmaxo_
                  do j=cfg%jmino_,cfg%jmaxo_
@@ -368,10 +368,11 @@ contains
               ! Get VF field
               call cfg%calculate_vf(method=sharp,allow_zero_vf=.false.)
               ! Correct with midpoint rule
+              !---------------------------------------------------
                call get_force()
               acc=force/mass+(1.0_WP-fs%rho/rhop)*fs%gravity
-              pos=pos_old+time%dt*vel
-              vel=vel_old+time%dt*acc
+              pos=pos_old+time%dtmid*vel
+              vel=vel_old+time%dtmid*acc
               ! Overwrite levelset and volume fraction
               do k=cfg%kmino_,cfg%kmaxo_
                  do j=cfg%jmino_,cfg%jmaxo_
