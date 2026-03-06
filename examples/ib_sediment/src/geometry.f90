@@ -114,6 +114,7 @@ contains
         ! Get VF field
         call cfg%calculate_vf(method=sharp,allow_zero_vf=.false.)
         if (cfg%iproc.eq.1) cfg%VF(cfg%imino:cfg%imin-1,:,:)=0.0_WP
+        if (cfg%iproc.eq.cfg%npx) cfg%VF(cfg%imax+1:cfg%imaxo,:,:)=0.0_WP
       end block create_walls
       
       

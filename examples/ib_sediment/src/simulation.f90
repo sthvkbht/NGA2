@@ -200,12 +200,12 @@ contains
       
       ! Create an incompressible flow solver without bconds
       create_flow_solver: block
-        use incomp_class,   only: dirichlet,clipped_neumann
+        use incomp_class,   only: dirichlet
         ! Create flow solver
         fs=incomp(cfg=cfg,name='Incompressible NS')
         ! Define boundary conditions
-        call fs%add_bcond(name= 'inflow',type=dirichlet      ,locator=left_of_domain ,face='x',dir=-1,canCorrect=.false.)
-        call fs%add_bcond(name='outflow',type=clipped_neumann,locator=right_of_domain,face='x',dir=+1,canCorrect=.true. )
+        call fs%add_bcond(name= 'bottom',type=dirichlet,locator=left_of_domain ,face='x',dir=-1,canCorrect=.false.)
+        call fs%add_bcond(name= 'top',   type=dirichlet,locator=right_of_domain,face='x',dir=+1,canCorrect=.false.)
         ! Set the flow properties
          call param_read('Density',fs%rho)
          call param_read('Dynamic viscosity',visc); fs%visc=visc
