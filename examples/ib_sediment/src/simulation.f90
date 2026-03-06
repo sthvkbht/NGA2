@@ -2,7 +2,7 @@
 module simulation
    use precision,         only: WP
    use geometry,          only: cfg,D
-   use fft3d_class,       only: fft3d
+   use fft2d_class,       only: fft2d
    use ddadi_class,       only: ddadi
    use incomp_class,      only: incomp
    use timetracker_class, only: timetracker
@@ -15,7 +15,7 @@ module simulation
    
    !> Get an an incompressible solver, pressure solver, and corresponding time tracker
    type(incomp) :: fs
-   type(fft3d)  :: ps
+   type(fft2d)  :: ps
    type(timetracker) :: time
    
    !> Implicit solver
@@ -41,6 +41,30 @@ module simulation
    
 contains
 
+
+   !> Function that localizes the left (x-) of the domain
+   function left_of_domain(pg,i,j,k) result(isIn)
+     use pgrid_class, only: pgrid
+     implicit none
+     class(pgrid), intent(in) :: pg
+     integer, intent(in) :: i,j,k
+     logical :: isIn
+     isIn=.false.
+     if (i.eq.pg%imin) isIn=.true.
+   end function left_of_domain
+   
+
+   !> Function that localizes the right (x+) of the domain
+   function right_of_domain(pg,i,j,k) result(isIn)
+     use pgrid_class, only: pgrid
+     implicit none
+     class(pgrid), intent(in) :: pg
+     integer, intent(in) :: i,j,k
+     logical :: isIn
+     isIn=.false.
+     if (i.eq.pg%imax+1) isIn=.true.
+   end function right_of_domain
+   
 
    !> Compute force on particle
    subroutine get_force()
@@ -176,15 +200,19 @@ contains
       
       ! Create an incompressible flow solver without bconds
       create_flow_solver: block
-         ! Create flow solver
-         fs=incomp(cfg=cfg,name='Incompressible NS')
-         ! Set the flow properties
+        use incomp_class,   only: dirichlet,clipped_neumann
+        ! Create flow solver
+        fs=incomp(cfg=cfg,name='Incompressible NS')
+        ! Define boundary conditions
+        call fs%add_bcond(name= 'inflow',type=dirichlet      ,locator=left_of_domain ,face='x',dir=-1,canCorrect=.false.)
+        call fs%add_bcond(name='outflow',type=clipped_neumann,locator=right_of_domain,face='x',dir=+1,canCorrect=.true. )
+        ! Set the flow properties
          call param_read('Density',fs%rho)
          call param_read('Dynamic viscosity',visc); fs%visc=visc
          ! Assign acceleration of gravity
          call param_read('Gravity',fs%gravity)
          ! Configure pressure solver
-         ps=fft3d(cfg=cfg,name='Pressure',nst=7)
+         ps=fft2d(cfg=cfg,name='Pressure',nst=7)
          ! Check if implicit velocity solver is used
          call param_read('Use implicit solver',use_implicit)
          if (use_implicit) then
@@ -221,6 +249,8 @@ contains
         call fs%interp_vel(Ui,Vi,Wi)
         ! Compute divergence
         call fs%get_div()
+        ! Compute MFR through all boundary conditions
+        call fs%get_mfr()
         ! Store initial levelset and VF (absent of particles)
         Gib0=cfg%Gib; VF0=cfg%VF
       end block initialize_velocity
@@ -352,7 +382,7 @@ contains
               ! Advance with Euler prediction
               !---------------------------------------------------
               call get_force()
-              acc=force/mass+(1.0_WP-fs%rho/rhop)*fs%gravity
+              acc=force/mass+fs%gravity
               pos=pos_old+0.5_WP*time%dtmid*vel
               vel=vel_old+0.5_WP*time%dtmid*acc
               ! Overwrite levelset and volume fraction
@@ -370,7 +400,7 @@ contains
               ! Correct with midpoint rule
               !---------------------------------------------------
                call get_force()
-              acc=force/mass+(1.0_WP-fs%rho/rhop)*fs%gravity
+              acc=force/mass+fs%gravity
               pos=pos_old+time%dtmid*vel
               vel=vel_old+time%dtmid*acc
               ! Overwrite levelset and volume fraction
@@ -399,6 +429,9 @@ contains
 
             ! Explicit calculation of drho*u/dt from NS
             call fs%get_dmomdt(resU,resV,resW)
+
+            ! Add momentum source terms
+            call fs%addsrc_gravity(resU,resV,resW)
 
             ! Assemble explicit residual
             resU=-2.0_WP*(fs%rho*fs%U-fs%rho*fs%Uold)+time%dt*resU

@@ -64,7 +64,7 @@ contains
          end do
          
          ! General serial grid object
-         grid=sgrid(coord=cartesian,no=1,x=x,y=y,z=z,xper=.true.,yper=.true.,zper=.true.,name='tube')
+         grid=sgrid(coord=cartesian,no=1,x=x,y=y,z=z,xper=.false.,yper=.true.,zper=.true.,name='tube')
          
       end block create_grid
       
@@ -94,17 +94,18 @@ contains
         do k=cfg%kmino_,cfg%kmaxo_
            do j=cfg%jmino_,cfg%jmaxo_
               do i=cfg%imino_,cfg%imaxo_
-                 ! Radial Distance From Cylinder Axis
-                 dyz=sqrt(cfg%ym(j)**2+cfg%zm(k)**2)-R
-                 ! Distance Along X To End Caps
-                 dx=max(x0-cfg%xm(i),cfg%xm(i)-x1)
-                 ! Signed Distance Function
-                 if(dyz<=0.0_WP .and. dx<=0.0_WP) then
-                    dist=-min(-dyz,-dx)
-                 else
-                    dist=sqrt(max(dx,0.0_WP)**2+max(dyz,0.0_WP)**2)
-                 end if
-                 cfg%Gib(i,j,k)=dist
+!!$                 ! Radial Distance From Cylinder Axis
+!!$                 dyz=sqrt(cfg%ym(j)**2+cfg%zm(k)**2)-R
+!!$                 ! Distance Along X To End Caps
+!!$                 dx=max(x0-cfg%xm(i),cfg%xm(i)-x1)
+!!$                 ! Signed Distance Function
+!!$                 if(dyz<=0.0_WP .and. dx<=0.0_WP) then
+!!$                    dist=-min(-dyz,-dx)
+!!$                 else
+!!$                    dist=sqrt(max(dx,0.0_WP)**2+max(dyz,0.0_WP)**2)
+!!$                 end if
+!!$                 cfg%Gib(i,j,k)=dist
+                 cfg%Gib(i,j,k)=sqrt(cfg%ym(j)**2+cfg%zm(k)**2)-R
               end do
            end do
         end do
@@ -112,6 +113,7 @@ contains
         call cfg%calculate_normal()
         ! Get VF field
         call cfg%calculate_vf(method=sharp,allow_zero_vf=.false.)
+        if (cfg%iproc.eq.1) cfg%VF(cfg%imino:cfg%imin-1,:,:)=0.0_WP
       end block create_walls
       
       
