@@ -1,5 +1,5 @@
 # Parallelization
-Partition : 4 1 1
+Partition : 1 2 2
 
 # Mesh definition
 Pipe diameter : 2.5e-3! 3.5e-3, 5.5e-3
