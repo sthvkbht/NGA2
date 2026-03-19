@@ -1,0 +1,49 @@
+# Parallelization
+Partition :	4 1 1
+
+# Mesh definition
+Lx :	0.55
+Ly :	0.595
+Lz :	300e-6!0.62
+nx :	768
+ny :	512
+nz :	1
+Stretching : 2
+
+# Fluid properties
+Temperature : 293.15
+Pressure : 101325
+Schmidt number : 700
+Gravity : 0 -9.81 0
+
+# Inflow definition
+S jet : 0
+D jet : 6e-3
+V jet : 1.06
+H jet : 8e-2
+
+# Particle parameters
+Particle timestep size :        2e-5
+Collision timescale :           30e-5
+Particle mean diameter :        250e-6
+Particle standard deviation :   10e-6
+Particle min diameter :         240e-6
+Particle max diameter :         260e-6
+Particle diameter shift :       0
+Particle density :              2600
+
+# Particle collisions
+Coefficient of restitution :    0.3
+Wall restitution :              0.3
+Friction coefficient :          0.5
+
+# Particle injection
+Particle mass flow rate:        3.33e-4!3.33e-3
+Particle velocity:              0 1.06 0
+
+# Time integration
+Max timestep size :	6e-4
+Max cfl number :	   0.9
+
+# Ensight output
+Ensight output period : 20e-4
