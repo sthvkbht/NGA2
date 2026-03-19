@@ -371,14 +371,12 @@ module simulation
    !> Time integrate our problem
    subroutine simulation_run
      implicit none
-     real(WP) :: cfl
      
       ! Perform time integration
      do while (.not.time%done())
 
          ! Increment time
-         call lp%get_cfl(time%dt,cflc=time%cfl)
-         call fs%get_cfl(time%dt,cfl); time%cfl=max(time%cfl,cfl)
+         call fs%get_cfl(time%dt,time%cfl)
          call time%adjust_dt()
          call time%increment()
 
@@ -391,7 +389,7 @@ module simulation
          ! Particle update
          lpt: block
            integer :: i
-           real(WP) :: dt_done,mydt
+           real(WP) :: dt_done,mydt,cfl
            ! 'Glue' particles to bottom wall
            do i=1,lp%np_
               if (lp%p(i)%pos(2).lt.lp%cfg%y(lp%cfg%jmin)+0.51_WP*lp%p(i)%d) then

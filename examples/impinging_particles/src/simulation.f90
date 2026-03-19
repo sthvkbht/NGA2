@@ -451,14 +451,12 @@ contains
    subroutine simulation_run
       use tpns_class, only: arithmetic_visc
       implicit none
-      real(WP) :: cfl
       
       ! Perform time integration
       do while (.not.time%done())
          
          ! Increment time
-         call lp%get_cfl(time%dt,cflc=time%cfl)
-         call fs%get_cfl(time%dt,cfl); time%cfl=max(time%cfl,cfl)
+         call fs%get_cfl(time%dt,time%cfl)
          call time%adjust_dt()
          call time%increment()
          
@@ -480,7 +478,7 @@ contains
 
          ! Particle update
          lpt_step: block
-            real(WP) :: dt_done,mydt
+            real(WP) :: dt_done,mydt,cfl
             real(WP), dimension(:,:,:), allocatable :: tmp1,tmp2,tmp3,VFold,rho
             real(WP), dimension(:,:,:), allocatable :: dVFdx,dVFdy,dVFdz
             real(WP), dimension(:,:,:,:), allocatable :: vort,acc
