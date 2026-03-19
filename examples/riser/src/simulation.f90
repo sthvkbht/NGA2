@@ -458,14 +458,12 @@ contains
   subroutine simulation_run
     use parallel, only: parallel_time
     implicit none
-    real(WP) :: cfl
 
     ! Perform time integration
     do while (.not.time%done())
 
        ! Increment time
-       call lp%get_cfl(time%dt,cflc=time%cfl)
-       call fs%get_cfl(time%dt,cfl); time%cfl=max(time%cfl,cfl)
+       call fs%get_cfl(time%dt,time%cfl)
        call time%adjust_dt()
        call time%increment()
 
@@ -477,7 +475,7 @@ contains
 
        ! Particle update
        lpt: block
-         real(WP) :: dt_done,mydt
+         real(WP) :: dt_done,mydt,cfl
          ! Get fluid stress
          call fs%get_div_stress(resU,resV,resW)
          resU=resU+bforce
