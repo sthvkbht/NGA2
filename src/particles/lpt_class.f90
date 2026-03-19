@@ -1307,13 +1307,14 @@ contains
    
    !> Inject particles from a prescribed location with given mass flowrate
    !> Requires injection parameters to be set beforehand
-   subroutine inject(this,dt,avoid_overlap)
+   subroutine inject(this,dt,face,avoid_overlap)
       use mpi_f08
       use parallel,  only: MPI_REAL_WP
       use mathtools, only: Pi
       implicit none
       class(lpt), intent(inout) :: this
       real(WP), intent(inout) :: dt                  !< Timestep size over which to advance
+      character(len=1), intent(in), optional :: face !< Injection face (x/y/z)
       logical, intent(in), optional :: avoid_overlap !< Option to avoid overlap during injection
       real(WP) :: inj_min(3),inj_max(3)              !< Min/max extents of injection
       real(WP) :: Mgoal,Madded,Mtmp,buf              !< Mass flow rate parameters
@@ -1323,6 +1324,7 @@ contains
       integer, dimension(:), allocatable :: nrecv
       type(part), dimension(:), allocatable :: p2
       type(MPI_Status) :: status
+      character(len=1) :: face_
       logical :: avoid_overlap_,overlap
       
       ! Initial number of particles
@@ -1340,6 +1342,13 @@ contains
          maxid_=max(maxid_,this%p(i)%id)
       end do
       call MPI_ALLREDUCE(maxid_,maxid,1,MPI_INTEGER8,MPI_MAX,this%cfg%comm,ierr)
+
+      ! Determine face to inject from
+      if (present(face)) then
+         face_=face
+      else
+         face_='x'
+      end if
       
       ! Communicate nearby particles to check for overlap
       avoid_overlap_=.false.
@@ -1409,7 +1418,7 @@ contains
                this%p(count)%Tcol  =0.0_WP
                this%p(count)%angVel=0.0_WP
                ! Give a position at the injector to the particle
-               this%p(count)%pos=get_position()
+               this%p(count)%pos=get_position(face=face_)
                overlap=.false.
                ! Check overlap with particles recently injected
                if (avoid_overlap_) then
@@ -1490,38 +1499,62 @@ contains
       end function get_diameter
       
       ! Position for bulk injection of particles
-      function get_position() result(pos)
+      function get_position(face) result(pos)
         use random, only: random_uniform
         use mathtools, only: twoPi
         implicit none
+        character(len=1), intent(in) :: face
         real(WP), dimension(3) :: pos
         real(WP) :: rand,r,theta
-        ! Set x position
-        pos(1) = this%inj_pos(1)
-        ! Set in y & z
+        integer :: i1,i2
+        ! Set fixed coordinate and transverse dirs
+        select case (face)
+        case ('x')
+           pos(1)=this%inj_pos(1)
+           i1=2; i2=3
+        case ('y')
+           pos(2)=this%inj_pos(2)
+           i1=1; i2=3
+        case ('z')
+           pos(3)=this%inj_pos(3)
+           i1=1; i2=2
+        end select
+        ! Transverse position
         if (this%inj_D.gt.0.0_WP) then
-           ! Random y & z position within a circular region
-           if (this%cfg%nz.eq.1) then
-              pos(2)=random_uniform(lo=this%inj_pos(2)-0.5_WP*this%inj_D,hi=this%inj_pos(2)+0.5_WP*this%inj_D)
-              pos(3) = this%cfg%zm(this%cfg%kmin_)
+           ! Circular region in transverse plane
+           if (this%cfg%nz.eq.1.and.i2.eq.3) then
+              pos(i1)=random_uniform(lo=this%inj_pos(i1)-0.5_WP*this%inj_D,hi=this%inj_pos(i1)+0.5_WP*this%inj_D)
+              pos(i2)=this%cfg%zm(this%cfg%kmin_)
            else
               rand=random_uniform(lo=0.0_WP,hi=1.0_WP)
-              r=0.5_WP*this%inj_D*sqrt(rand) !< sqrt(rand) avoids accumulation near the center
-              call random_number(rand)
-              theta=random_uniform(lo=0.0_WP,hi=twoPi)
-              pos(2) = this%inj_pos(2)+r*sin(theta)
-              pos(3) = this%inj_pos(3)+r*cos(theta)
+              r=0.5_WP*this%inj_D*sqrt(rand)
+              theta=random_uniform(lo=0.0_WP, hi=twoPi)
+              pos(i1)=this%inj_pos(i1)+r*sin(theta)
+              pos(i2)=this%inj_pos(i2)+r*cos(theta)
            end if
         else
-           ! Random y & z position across domain width
-           pos(2)=random_uniform(lo=this%cfg%y(this%cfg%jmin),hi=this%cfg%y(this%cfg%jmax+1))
-           if (this%cfg%nz.eq.1) then
+           ! Full domain sampling in transverse plane
+           select case (i1)
+           case (1)
+              pos(1) = random_uniform(this%cfg%x(this%cfg%imin), this%cfg%x(this%cfg%imax+1))
+           case (2)
+              pos(2) = random_uniform(this%cfg%y(this%cfg%jmin), this%cfg%y(this%cfg%jmax+1))
+           case (3)
+              pos(3) = random_uniform(this%cfg%z(this%cfg%kmin), this%cfg%z(this%cfg%kmax+1))
+           end select
+           if (this%cfg%nz.eq.1.and.i2.eq.3) then
               pos(3) = this%cfg%zm(this%cfg%kmin_)
            else
-              pos(3)=random_uniform(lo=this%cfg%z(this%cfg%kmin),hi=this%cfg%z(this%cfg%kmax+1))
+              select case (i2)
+              case (1)
+                 pos(1) = random_uniform(this%cfg%x(this%cfg%imin), this%cfg%x(this%cfg%imax+1))
+              case (2)
+                 pos(2) = random_uniform(this%cfg%y(this%cfg%jmin), this%cfg%y(this%cfg%jmax+1))
+              case (3)
+                 pos(3) = random_uniform(this%cfg%z(this%cfg%kmin), this%cfg%z(this%cfg%kmax+1))
+              end select
            end if
         end if
-      
     end function get_position
       
    end subroutine inject
