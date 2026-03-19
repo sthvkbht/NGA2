@@ -224,6 +224,9 @@ contains
       call param_read('Gravity',lp%gravity)
       ! Set filter width
       call param_read('Filter width',lp%filter_width)
+      ! Update Gib to be consistent with LPT collisions
+      cfg%Gib=-cfg%Gib
+      cfg%Nib=-cfg%Nib
       ! Initialize particles
       if (restarted) then
          call param_read('Restart from',timestamp,'r')
@@ -271,7 +274,7 @@ contains
                   if (lp%cfg%nz.eq.1) lp%p(i)%pos(3)=0.0_WP
                   lp%p(i)%ind=lp%cfg%get_ijk_global(lp%p(i)%pos,[lp%cfg%imin,lp%cfg%jmin,lp%cfg%kmin])
                   buf=cfg%get_scalar(pos=lp%p(i)%pos,i0=lp%p(i)%ind(1),j0=lp%p(i)%ind(2),k0=lp%p(i)%ind(3),S=cfg%Gib,bc='n')
-                  if (buf.lt.0.5_WP*lp%p(i)%d) outside=.false.
+                  if (buf.gt.0.5_WP*lp%p(i)%d) outside=.false.
                end do
                overlap=.false.
                do kk=lp%p(i)%ind(3)-1,lp%p(i)%ind(3)+1
