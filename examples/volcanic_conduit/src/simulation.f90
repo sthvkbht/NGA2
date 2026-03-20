@@ -44,7 +44,7 @@ module simulation
    real(WP) :: Pinf,Gamma,Cv,Prandtl,Tib
 
    !> Flow parameters
-   real(WP) :: U0,bforce,mfr,mfr_target
+   real(WP) :: U0,T0,rhoU0,meanRhoU,meanT
    
  contains
 
@@ -124,25 +124,27 @@ module simulation
    end subroutine get_div
 
 
-   !> Compute massflow rate
-   function get_bodyforce_mfr() result(mfr)
-     use mpi_f08,  only: MPI_SUM,MPI_ALLREDUCE
+   !> Compute mean momentum and temperature
+   subroutine get_bodyforce()
+     use mpi_f08,  only: MPI_SUM,MPI_ALLREDUCE,MPI_IN_PLACE
      use parallel, only: MPI_REAL_WP
      integer :: i,j,k,ierr
-     real(WP) :: vol,myRhoU,myUvol,Uvol,mfr
-     myRhoU=0.0_WP; myUvol=0.0_WP
+     real(WP) :: vol,Uvol
+     Uvol=0.0_WP; meanRhoU=0.0_WP; meanT=0.0_WP
      do k=fs%cfg%kmin_,fs%cfg%kmax_
         do j=fs%cfg%jmin_,fs%cfg%jmax_
            do i=fs%cfg%imin_,fs%cfg%imax_
               vol=fs%cfg%dxm(i)*fs%cfg%dy(j)*fs%cfg%dz(k)*0.5_WP*sum(cfg%VF(i-1:i,j,k))
-              myUvol=myUvol+vol
-              myRhoU=myRhoU+vol*fs%Q(i,j,k,3)
+              Uvol=Uvol+vol
+              meanRhoU=meanRhoU+vol*fs%Q(i,j,k,3)
+              meanT=meanT+vol*get_T(fs%Q(i,j,k,1),fs%P(i,j,k))
            end do
         end do
      end do
-     call MPI_ALLREDUCE(myUvol,Uvol,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr)
-     call MPI_ALLREDUCE(myRhoU,mfr ,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr); mfr=mfr/Uvol
-   end function get_bodyforce_mfr
+     call MPI_ALLREDUCE(MPI_IN_PLACE,Uvol,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr)
+     call MPI_ALLREDUCE(MPI_IN_PLACE,meanRhoU,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr); meanRhoU=meanRhoU/Uvol
+     call MPI_ALLREDUCE(MPI_IN_PLACE,meanT,1,MPI_REAL_WP,MPI_SUM,fs%cfg%comm,ierr); meanT=meanT/Uvol
+   end subroutine get_bodyforce
 
 
    !> Overwrite cosnerved variables using volume-of-solid IBM
@@ -256,8 +258,8 @@ module simulation
            df=datafile(pg=cfg,filename=trim(cfg%name),nval=4,nvar=5)
            df%valname(1)='t'
            df%valname(2)='dt'
-           df%valname(3)='mfr'
-           df%valname(4)='bforce'
+           df%valname(3)='meanRhoU'
+           df%valname(4)='meanT'
            df%varname(1)='Q1'
            df%varname(2)='Q2'
            df%varname(3)='Q3'
@@ -458,9 +460,9 @@ module simulation
            call df%pullvar(name='Q3',var=fs%Q(:,:,:,3))
            call df%pullvar(name='Q4',var=fs%Q(:,:,:,4))
            call df%pullvar(name='Q5',var=fs%Q(:,:,:,5))
-           call df%pullval(name='mfr',val=mfr)
-           call df%pullval(name='bforce',val=bforce)
-           mfr_target=mfr
+           call df%pullval(name='meanRhoU',val=meanRhoU)
+           call df%pullval(name='meanT',val=meanT)
+           rhoU0=meanRhoU; T0=meanT
         else
            ! Initialize primary variables
            do k=cfg%kmino_,cfg%kmaxo_
@@ -482,10 +484,9 @@ module simulation
               fs%Q(:,:,:,i)=fs%Q(:,:,:,i)*(1.0_WP-lp%VF)
            end do
            call fs%get_momentum()
-           ! Get target MFR using bulk velocity in absence of particles
-           mfr=get_bodyforce_mfr()
-           mfr_target=mfr
-           bforce=0.0_WP
+           ! Get target momentum and energy
+           call get_bodyforce()
+           rhoU0=meanRhoU; T0=meanT
            if (fs%cfg%amRoot) then
               print*,"===== Fluid Setup Description ====="
               print*,'Mach number', U0/maxval(fs%C)
@@ -552,8 +553,8 @@ module simulation
         call mfile%add_column(time%t,'Time')
         call mfile%add_column(time%dt,'Timestep size')
         call mfile%add_column(time%cfl,'Maximum CFL')
-        call mfile%add_column(mfr,'MFR')
-        call mfile%add_column(bforce,'Body force')
+        call mfile%add_column(meanRhoU,'MFR')
+        call mfile%add_column(meanT,'<T>')
         call mfile%add_column(fs%Umax,'Umax')
         call mfile%add_column(fs%Vmax,'Vmax')
         call mfile%add_column(fs%Wmax,'Wmax')
@@ -635,8 +636,7 @@ module simulation
          fs%Qold=fs%Q
 
          ! Get mass flow rate
-         mfr=get_bodyforce_mfr()
-         bforce=(mfr_target-mfr)/time%dt
+         call get_bodyforce()
 
          ! Prepare SGS viscosity models
          call prepare_viscosities()
@@ -655,8 +655,9 @@ module simulation
          dQdt(:,:,:,3,1)=dQdt(:,:,:,3,1)+srcUlp
          dQdt(:,:,:,4,1)=dQdt(:,:,:,4,1)+srcVlp
          dQdt(:,:,:,5,1)=dQdt(:,:,:,5,1)+srcWlp
-         ! Add body forcing to momentum
-         dQdt(:,:,:,3,1)=dQdt(:,:,:,3,1)+bforce
+         ! Add body forcing to momentum and energy
+         dQdt(:,:,:,2,1)=dQdt(:,:,:,2,1)+Cv*fs%Q(:,:,:,1)*(T0-meanT)/time%dt
+         dQdt(:,:,:,3,1)=dQdt(:,:,:,3,1)+(rhoU0-meanRhoU)/time%dt
          ! Advance
          fs%Q=fs%Qold+0.5_WP*time%dt*dQdt(:,:,:,:,1)
          ! Apply IBM
@@ -674,8 +675,9 @@ module simulation
          dQdt(:,:,:,3,2)=dQdt(:,:,:,3,2)+srcUlp
          dQdt(:,:,:,4,2)=dQdt(:,:,:,4,2)+srcVlp
          dQdt(:,:,:,5,2)=dQdt(:,:,:,5,2)+srcWlp
-         ! Add body forcing to momentum
-         dQdt(:,:,:,3,2)=dQdt(:,:,:,3,2)+bforce
+         ! Add body forcing to momentum and energy
+         dQdt(:,:,:,2,2)=dQdt(:,:,:,2,2)+Cv*fs%Q(:,:,:,1)*(T0-meanT)/time%dt
+         dQdt(:,:,:,3,2)=dQdt(:,:,:,3,2)+(rhoU0-meanRhoU)/time%dt
          ! Advance
          fs%Q=fs%Qold+0.5_WP*time%dt*dQdt(:,:,:,:,2)
          ! Apply IBM
@@ -693,8 +695,9 @@ module simulation
          dQdt(:,:,:,3,3)=dQdt(:,:,:,3,3)+srcUlp
          dQdt(:,:,:,4,3)=dQdt(:,:,:,4,3)+srcVlp
          dQdt(:,:,:,5,3)=dQdt(:,:,:,5,3)+srcWlp
-         ! Add body forcing to momentum
-         dQdt(:,:,:,3,3)=dQdt(:,:,:,3,3)+bforce
+         ! Add body forcing to momentum and energy
+         dQdt(:,:,:,2,3)=dQdt(:,:,:,2,3)+Cv*fs%Q(:,:,:,1)*(T0-meanT)/time%dt
+         dQdt(:,:,:,3,3)=dQdt(:,:,:,3,3)+(rhoU0-meanRhoU)/time%dt
          ! Advance
          fs%Q=fs%Qold+1.0_WP*time%dt*dQdt(:,:,:,:,3)
          ! Apply IBM
@@ -712,8 +715,9 @@ module simulation
          dQdt(:,:,:,3,4)=dQdt(:,:,:,3,4)+srcUlp
          dQdt(:,:,:,4,4)=dQdt(:,:,:,4,4)+srcVlp
          dQdt(:,:,:,5,4)=dQdt(:,:,:,5,4)+srcWlp
-         ! Add body forcing to momentum
-         dQdt(:,:,:,3,4)=dQdt(:,:,:,3,4)+bforce
+         ! Add body forcing to momentum and energy
+         dQdt(:,:,:,2,4)=dQdt(:,:,:,2,4)+Cv*fs%Q(:,:,:,1)*(T0-meanT)/time%dt
+         dQdt(:,:,:,3,4)=dQdt(:,:,:,3,4)+(rhoU0-meanRhoU)/time%dt
          ! Advance
          fs%Q=fs%Qold+time%dt/6.0_WP*(dQdt(:,:,:,:,1)+2.0_WP*dQdt(:,:,:,:,2)+2.0_WP*dQdt(:,:,:,:,3)+dQdt(:,:,:,:,4))
          ! Apply IBM
@@ -729,6 +733,7 @@ module simulation
          call get_div()
 
          !> Perform and output monitoring
+         call get_bodyforce()
          call fs%get_info()
          call lp%get_max()
          call mfile%write()
@@ -759,8 +764,8 @@ module simulation
               ! Populate df and write it
               call df%pushval(name='t' ,val=time%t        )
               call df%pushval(name='dt',val=time%dt       )
-              call df%pushval(name='mfr',val=mfr_target   )
-              call df%pushval(name='bforce',val=bforce    )
+              call df%pushval(name='meanRhoU',val=rhoU0   )
+              call df%pushval(name='meanT',val=T0         )
               call df%pushvar(name='Q1' ,var=fs%Q(:,:,:,1))
               call df%pushvar(name='Q2' ,var=fs%Q(:,:,:,2))
               call df%pushvar(name='Q3' ,var=fs%Q(:,:,:,3))
