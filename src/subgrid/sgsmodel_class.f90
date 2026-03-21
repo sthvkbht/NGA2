@@ -517,6 +517,56 @@ contains
    end subroutine visc_vreman
 
 
+   !> Get subgrid scale dynamic viscosity - WALE
+   subroutine visc_wale(this,rho,gradu)
+      implicit none
+      class(sgsmodel), intent(inout) :: this
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: rho         !< Density including all ghosts
+      real(WP), dimension(1:,1:,this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: gradU !< Velocity gradient tensor
+      integer :: i,j,k
+      real(WP), dimension(3,3) :: gu2
+      real(WP), dimension(6) :: Sd,SR
+      real(WP) :: Sd2,SR2,trace
+      
+      ! Prepare magnitude of SR tensor and its symmetric and antisymmetric parts
+      do k=this%cfg%kmin_,this%cfg%kmax_
+         do j=this%cfg%jmin_,this%cfg%jmax_
+            do i=this%cfg%imin_,this%cfg%imax_
+               ! Compute gu2_ij=gradu_ik*gradu_kj
+               gu2=matmul(gradu(1:3,1:3,i,j,k),gradu(1:3,1:3,i,j,k))
+               ! Compute Sd_ij=0.5*(gu2_ij+gu2_ji)-1/3*gu2_kk*delta_ij
+               Sd(1)=gu2(1,1)
+               Sd(2)=gu2(2,2)
+               Sd(3)=gu2(3,3)
+               Sd(4)=0.5_WP*(gu2(1,2)+gu2(2,1))
+               Sd(5)=0.5_WP*(gu2(2,3)+gu2(3,2))
+               Sd(6)=0.5_WP*(gu2(1,3)+gu2(3,1))
+               trace=(gu2(1,1)+gu2(2,2)+gu2(3,3))/3.0_WP
+               Sd(1)=gu2(1,1)-trace
+               Sd(2)=gu2(2,2)-trace
+               Sd(3)=gu2(3,3)-trace
+               ! Assemble SR from gradU
+               SR(1)=gradu(1,1,i,j,k)
+               SR(2)=gradu(2,2,i,j,k)
+               SR(3)=gradu(3,3,i,j,k)
+               SR(4)=0.5_WP*(gradu(1,2,i,j,k)+gradu(2,1,i,j,k))
+               SR(5)=0.5_WP*(gradu(2,3,i,j,k)+gradu(3,2,i,j,k))
+               SR(6)=0.5_WP*(gradu(1,3,i,j,k)+gradu(3,1,i,j,k))
+               ! Compute SdijSdij
+               Sd2=Sd(1)**2+Sd(2)**2+Sd(3)**2+2.0_WP*(Sd(4)**2+Sd(5)**2+Sd(6)**2)
+               ! Compute SijSij
+               SR2=SR(1)**2+SR(2)**2+SR(3)**2+2.0_WP*(SR(4)**2+SR(5)**2+SR(6)**2)
+               ! Compute eddy viscosity
+               this%visc(i,j,k)=rho(i,j,k)*this%Cm2*this%delta(i,j,k)**2*Sd2**1.5_WP/(SR2**2.5_WP+Sd2**1.25_WP+epsilon(1.0_WP))
+            end do
+         end do
+      end do   
+
+      ! Synchronize visc
+      call this%cfg%sync(this%visc)
+   end subroutine visc_wale
+    
+
    !> Get artifical bulk viscosity
    subroutine visc_artif(this,dt,rho,gradu)
       implicit none
@@ -565,52 +615,6 @@ contains
          if (this%cfg%kproc.eq.this%cfg%npz) this%visc(:,:,this%cfg%kmax+1)=this%visc(:,:,this%cfg%kmax)
       end if
    end subroutine visc_artif
-
-   !> Get subgrid scale dynamic viscosity - WALE
-   subroutine visc_wale(this,rho,gradu)
-      implicit none
-      class(sgsmodel), intent(inout) :: this
-      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: rho         !< Density including all ghosts
-      real(WP), dimension(1:,1:,this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: gradU !< Velocity gradient tensor
-      integer :: i,j,k
-      real(WP), dimension(3,3) :: gu2
-      real(WP), dimension(6) :: Sd,SR
-      real(WP) :: Sd2,SR2 
-      
-      ! Prepare magnitude of SR tensor and its symmetric and antisymmetric parts
-      do k=this%cfg%kmin_,this%cfg%kmax_
-         do j=this%cfg%jmin_,this%cfg%jmax_
-            do i=this%cfg%imin_,this%cfg%imax_
-               ! Compute gu2_ij=gradu_ik*gradu_kj
-               gu2=matmul(gradu(1:3,1:3,i,j,k),gradu(1:3,1:3,i,j,k))
-               ! Compute Sd_ij=0.5*(gu2_ij+gu2_ji)-1/3*gu2_kk*delta_ij
-               Sd(1)=gu2(1,1)
-               Sd(2)=gu2(2,2)
-               Sd(3)=gu2(3,3)
-               Sd(4)=0.5_WP*(gu2(1,2)+gu2(2,1))**2
-               Sd(5)=0.5_WP*(gu2(2,3)+gu2(3,2))**2
-               Sd(6)=0.5_WP*(gu2(1,3)+gu2(3,1))**2
-               Sd(1:3)=Sd(1:3)-1.0_WP/3.0_WP*(Sd(1)+Sd(2)+Sd(3))
-               ! Assemble SR from gradU
-               SR(1)=gradu(1,1,i,j,k)
-               SR(2)=gradu(2,2,i,j,k)
-               SR(3)=gradu(3,3,i,j,k)
-               SR(4)=0.5_WP*(gradu(1,2,i,j,k)+gradu(2,1,i,j,k))
-               SR(5)=0.5_WP*(gradu(2,3,i,j,k)+gradu(3,2,i,j,k))
-               SR(6)=0.5_WP*(gradu(1,3,i,j,k)+gradu(3,1,i,j,k))
-               ! Compute SdijSdij
-               Sd2=Sd(1)**2+Sd(2)**2+Sd(3)**2+2.0_WP*(Sd(4)**2+Sd(5)**2+Sd(6)**2)
-               ! Compute SijSij
-               SR2=SR(1)**2+SR(2)**2+SR(3)**2+2.0_WP*(SR(4)**2+SR(5)**2+SR(6)**2)
-               ! Compute eddy viscosity
-               this%visc(i,j,k)=rho(i,j,k)*this%Cm2*this%delta(i,j,k)**2*Sd2**1.5_WP/(SR2**2.5_WP+Sd2**1.25_WP+epsilon(1.0_WP))
-            end do
-         end do
-      end do   
-
-      ! Synchronize visc
-      call this%cfg%sync(this%visc)
-   end subroutine visc_wale
    
    
    !> Log info for model
