@@ -30,7 +30,7 @@ module sgsmodel_class
       ! Some model parameters
       real(WP) :: Cs_ref=0.17_WP
       real(WP) :: Cartif=2.0_WP,Cartif_vort=1.0e2_WP
-      real(WP) :: Cm2=0.325_WP                                  !< WALE model constant (squared)
+      real(WP) :: Cm2=0.105625_WP                               !< WALE model constant (squared)
       
       ! LM and MM tensor norms and eddy viscosity
       real(WP), dimension(:,:,:), allocatable :: LM,MM          !< LM and MM tensor norms
@@ -527,13 +527,38 @@ contains
       real(WP), dimension(3,3) :: gu2
       real(WP), dimension(6) :: Sd,SR
       real(WP) :: Sd2,SR2,trace
-      
       ! Prepare magnitude of SR tensor and its symmetric and antisymmetric parts
       do k=this%cfg%kmin_,this%cfg%kmax_
          do j=this%cfg%jmin_,this%cfg%jmax_
             do i=this%cfg%imin_,this%cfg%imax_
                ! Compute gu2_ij=gradu_ik*gradu_kj
-               gu2=matmul(gradu(1:3,1:3,i,j,k),gradu(1:3,1:3,i,j,k))
+               gu2(1,1) = gradu(1,1,i,j,k)*gradu(1,1,i,j,k) + &
+                    &     gradu(1,2,i,j,k)*gradu(2,1,i,j,k) + &
+                    &     gradu(1,3,i,j,k)*gradu(3,1,i,j,k)
+               gu2(1,2) = gradu(1,1,i,j,k)*gradu(1,2,i,j,k) + &
+                    &     gradu(1,2,i,j,k)*gradu(2,2,i,j,k) + &
+                    &     gradu(1,3,i,j,k)*gradu(3,2,i,j,k)
+               gu2(1,3) = gradu(1,1,i,j,k)*gradu(1,3,i,j,k) + &
+                    &     gradu(1,2,i,j,k)*gradu(2,3,i,j,k) + &
+                    &     gradu(1,3,i,j,k)*gradu(3,3,i,j,k)
+               gu2(2,1) = gradu(2,1,i,j,k)*gradu(1,1,i,j,k) + &
+                    &     gradu(2,2,i,j,k)*gradu(2,1,i,j,k) + &
+                    &     gradu(2,3,i,j,k)*gradu(3,1,i,j,k)
+               gu2(2,2) = gradu(2,1,i,j,k)*gradu(1,2,i,j,k) + &
+                    &     gradu(2,2,i,j,k)*gradu(2,2,i,j,k) + &
+                    &     gradu(2,3,i,j,k)*gradu(3,2,i,j,k)
+               gu2(2,3) = gradu(2,1,i,j,k)*gradu(1,3,i,j,k) + &
+                    &     gradu(2,2,i,j,k)*gradu(2,3,i,j,k) + &
+                    &     gradu(2,3,i,j,k)*gradu(3,3,i,j,k)
+               gu2(3,1) = gradu(3,1,i,j,k)*gradu(1,1,i,j,k) + &
+                    &     gradu(3,2,i,j,k)*gradu(2,1,i,j,k) + &
+                    &     gradu(3,3,i,j,k)*gradu(3,1,i,j,k)
+               gu2(3,2) = gradu(3,1,i,j,k)*gradu(1,2,i,j,k) + &
+                    &     gradu(3,2,i,j,k)*gradu(2,2,i,j,k) + &
+                    &     gradu(3,3,i,j,k)*gradu(3,2,i,j,k)
+               gu2(3,3) = gradu(3,1,i,j,k)*gradu(1,3,i,j,k) + &
+                    &     gradu(3,2,i,j,k)*gradu(2,3,i,j,k) + &
+                    &     gradu(3,3,i,j,k)*gradu(3,3,i,j,k)
                ! Compute Sd_ij=0.5*(gu2_ij+gu2_ji)-1/3*gu2_kk*delta_ij
                Sd(1)=gu2(1,1)
                Sd(2)=gu2(2,2)
@@ -560,8 +585,7 @@ contains
                this%visc(i,j,k)=rho(i,j,k)*this%Cm2*this%delta(i,j,k)**2*Sd2**1.5_WP/(SR2**2.5_WP+Sd2**1.25_WP+epsilon(1.0_WP))
             end do
          end do
-      end do   
-
+      end do
       ! Synchronize visc
       call this%cfg%sync(this%visc)
    end subroutine visc_wale
