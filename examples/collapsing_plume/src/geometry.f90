@@ -34,17 +34,16 @@ contains
          if (nz.eq.1) Lz=Lx/real(nx,WP)
          ! Create simple rectilinear grid
          do i=1,nx+1
-            !x(i)=0.5_WP*Lx*(1.0_WP+atanh((2.0_WP*real(i-1,WP)/real(nx,WP)-1.0_WP)*tanh(stretch))/stretch)
-            x(i)=real(i-1,WP)/real(nx,WP)*Lx-0.5_WP*Lx
+            x(i)=0.5_WP*Lx*sinh(stretch*(2.0_WP*real(i-1,WP)/real(nx,WP)-1.0_WP))/sinh(stretch)
          end do
          do j=1,ny+1
             y(j)=real(j-1,WP)/real(ny,WP)*Ly
          end do
          do k=1,nz+1
-            z(k)=real(k-1,WP)/real(nz,WP)*Lz-0.5_WP*Lz
+            z(k)=0.5_WP*Lz*sinh(stretch*(2.0_WP*real(k-1,WP)/real(nz,WP)-1.0_WP))/sinh(stretch)
          end do
          ! General serial grid object
-         grid=sgrid(coord=cartesian,no=2,x=x,y=y,z=z,xper=.true.,yper=.false.,zper=.true.,name='vdjet')
+         grid=sgrid(coord=cartesian,no=2,x=x,y=y,z=z,xper=.false.,yper=.false.,zper=.false.,name='vdjet')
       end block create_grid
       
       ! Create a config from that grid on our entire group
@@ -70,9 +69,9 @@ contains
               do i=cfg%imino_,cfg%imaxo_
                  G_wall=cfg%ym(j)-Hjet
                  r=sqrt(cfg%xm(i)**2+cfg%zm(k)**2)
-                 G_cyl=r-0.5_WP*Djet
+                 G_cyl=0.5_WP*Djet-r
                  if (cfg%ym(j).le.Hjet) then
-                    cfg%Gib(i,j,k)=-max(G_wall,-G_cyl)
+                    cfg%Gib(i,j,k)=-max(G_wall,G_cyl)
                  else
                     cfg%Gib(i,j,k)=-G_wall
                  end if

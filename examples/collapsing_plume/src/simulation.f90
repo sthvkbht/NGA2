@@ -2,8 +2,8 @@
 module simulation
    use precision,         only: WP
    use geometry,          only: cfg
+   use hypre_str_class,   only: hypre_str
    use ddadi_class,       only: ddadi
-   use fft2d_class,       only: fft2d
    use lpt_class,         only: lpt
    use lowmach_class,     only: lowmach
    use sgsmodel_class,    only: sgsmodel
@@ -16,8 +16,8 @@ module simulation
    implicit none
    private
    
-   !> Single low Mach flow solver and scalar solver and corresponding time tracker
-   type(fft2d),       public :: ps
+   !> Single low Mach flow solver, scalar solver, particle solver, and corresponding time tracker
+   type(hypre_str),   public :: ps
    type(ddadi),       public :: vs,ss
    type(lowmach),     public :: fs
    type(vdscalar),    public :: sc
@@ -31,7 +31,7 @@ module simulation
    type(event)   :: ens_evt
    
    !> Simulation monitor file
-   type(monitor) :: mfile,cflfile,lptfile,consfile
+   type(monitor) :: mfile,cflfile,lptfile,consfile,pfile
    
    public :: simulation_init,simulation_run,simulation_final
    
@@ -41,6 +41,7 @@ module simulation
    real(WP), dimension(:,:,:), allocatable :: Ui,Vi,Wi,rho0
    real(WP), dimension(:,:,:), allocatable :: srcUlp,srcVlp,srcWlp
    real(WP), dimension(:,:,:), allocatable :: tmp1,tmp2,tmp3
+   logical, dimension(:,:,:), allocatable :: flag
 
    !> Max timestep size for LPT
    integer ::  lp_iter
@@ -48,9 +49,10 @@ module simulation
    
    !> Equation of state
    real(WP) :: T,P,Schmidt
+   real(WP) :: minS,maxS
    
    !> Inlet parameters
-   real(WP) :: Sjet,Djet,Vjet
+   real(WP) :: Sjet,Djet,Vjet,Hjet
    
    !> Integral of pressure residual
    real(WP) :: int_RP=0.0_WP
@@ -163,9 +165,11 @@ contains
       call param_read('S jet',Sjet)
       call param_read('D jet',Djet)
       call param_read('V jet',Vjet)
+      call param_read('H jet',Hjet)
       
       ! Create a low-Mach flow solver with bconds
       create_velocity_solver: block
+         use hypre_str_class, only: pcg_pfmg
          use lowmach_class,   only: dirichlet,clipped_neumann
          real(WP) :: visc
          ! Create flow solver
@@ -173,10 +177,14 @@ contains
          ! Assign acceleration of gravity
          call param_read('Gravity',fs%gravity)
          ! Define boundary conditions
-         call fs%add_bcond(name='inflow' ,type=dirichlet      ,face='y',dir=-1,canCorrect=.false.,locator=ym_locator)
-         call fs%add_bcond(name='outflow',type=clipped_neumann,face='y',dir=+1,canCorrect=.true. ,locator=yp_locator)
-         ! Configure pressure solver
-         ps=fft2d(cfg=cfg,name='Pressure',nst=7)
+         call fs%add_bcond(name='bottom',type=dirichlet      ,face='y',dir=-1,canCorrect=.false.,locator=ym_locator)
+         call fs%add_bcond(name='top'   ,type=clipped_neumann,face='y',dir=+1,canCorrect=.true. ,locator=yp_locator)
+         call fs%add_bcond(name='left'  ,type=dirichlet,face='x',dir=-1,canCorrect=.false.,locator=xm_locator)
+         call fs%add_bcond(name='right ',type=dirichlet,face='x',dir=+1,canCorrect=.false.,locator=xp_locator)
+         ! Prepare and configure pressure solver
+         ps=hypre_str(cfg=cfg,name='Pressure',method=pcg_pfmg,nst=7)
+         call param_read('Pressure iteration',ps%maxit)
+         call param_read('Pressure tolerance',ps%rcvg)
          ! Configure implicit velocity solver
          vs=ddadi(cfg=cfg,name='Velocity',nst=7)
          ! Setup the solver
@@ -185,12 +193,14 @@ contains
       
       ! Create a scalar solver
       create_scalar: block
-         use vdscalar_class, only: dirichlet,neumann,quick
+         use vdscalar_class, only: dirichlet,neumann,bquick
          ! Create scalar solver
-         sc=vdscalar(cfg=cfg,scheme=quick,name='Salinity')
+         sc=vdscalar(cfg=cfg,scheme=bquick,name='Salinity')
          ! Define boundary conditions
-         call sc%add_bcond(name='inflow' ,type=dirichlet,locator=ym_locator_sc)
-         call sc%add_bcond(name='outflow',type=neumann  ,locator=yp_locator   ,dir='+y')
+         call sc%add_bcond(name='bottom',type=dirichlet,locator=ym_locator_sc)
+         call sc%add_bcond(name='top'   ,type=neumann  ,locator=yp_locator   ,dir='+y')
+         call sc%add_bcond(name='left'  ,type=neumann  ,locator=xm_locator_sc,dir='-x')
+         call sc%add_bcond(name='right' ,type=neumann  ,locator=xp_locator   ,dir='+x')
          ! Read in Schmidt number
          call param_read('Schmidt number',Schmidt)
          ! Configure implicit scalar solver
@@ -219,11 +229,12 @@ contains
          allocate(tmp1    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate(tmp2    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
          allocate(tmp3    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+         allocate(flag    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
        end block allocate_work_arrays
       
       ! Initialize time tracker with 2 subiterations
       initialize_timetracker: block
-         time=timetracker(amRoot=fs%cfg%amRoot)
+         time=timetracker(amRoot=fs%cfg%amRoot,name="plume")
          call param_read('Max timestep size',time%dtmax)
          call param_read('Max cfl number',time%cflmax)
          time%dt=time%dtmax
@@ -305,8 +316,10 @@ contains
                end do
             end do
          end do
+         y=sc%cfg%ym(sc%cfg%jmin); minS=max(0.003153_WP*y**3-167.9_WP*y**2+4.758_WP*y+43.29_WP,0.0_WP)
+         y=sc%cfg%ym(sc%cfg%jmax); maxS=max(0.003153_WP*y**3-167.9_WP*y**2+4.758_WP*y+43.29_WP,0.0_WP)
          ! Apply BCs
-         call sc%get_bcond('inflow',mybc)
+         call sc%get_bcond('bottom',mybc)
          do n=1,mybc%itr%no_
             i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
             sc%SC(i,j,k)=Sjet
@@ -333,7 +346,7 @@ contains
          call fs%rho_multiply
          ! Apply BCs
          call fs%apply_bcond(time%t,time%dt)
-         call fs%get_bcond('inflow',mybc)
+         call fs%get_bcond('bottom',mybc)
          do n=1,mybc%itr%no_
             i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
             radius=norm2([fs%cfg%xm(i),fs%cfg%zm(k)]-[0.0_WP,0.0_WP])
@@ -356,7 +369,7 @@ contains
       ! Add Ensight output
       create_ensight: block
          ! Create Ensight output from cfg
-         ens_out=ensight(cfg=cfg,name='vdjet')
+         ens_out=ensight(cfg=cfg,name='plume')
          ! Create event for Ensight output
          ens_evt=event(time=time,name='Ensight output')
          call param_read('Ensight output period',ens_evt%tper)
@@ -390,16 +403,21 @@ contains
          call mfile%add_column(fs%Umax,'Umax')
          call mfile%add_column(fs%Vmax,'Vmax')
          call mfile%add_column(fs%Wmax,'Wmax')
-         call mfile%add_column(fs%Pmax,'Pmax')
          call mfile%add_column(sc%SCmax,'Smax')
          call mfile%add_column(sc%SCmin,'Smin')
          call mfile%add_column(sc%rhomax,'RHOmax')
          call mfile%add_column(sc%rhomin,'RHOmin')
-         call mfile%add_column(int_RP,'Int(RP)')
-         call mfile%add_column(fs%divmax,'Maximum divergence')
-         call mfile%add_column(fs%psolv%it,'Pressure iteration')
-         call mfile%add_column(fs%psolv%rerr,'Pressure error')
          call mfile%write()
+         ! Create pressure monitor
+         pfile=monitor(fs%cfg%amRoot,'pressure')
+         call pfile%add_column(time%n,'Timestep number')
+         call pfile%add_column(time%t,'Time')
+         call pfile%add_column(fs%Pmax,'Pmax')
+         call pfile%add_column(int_RP,'Int(RP)')
+         call pfile%add_column(fs%divmax,'Maximum divergence')
+         call pfile%add_column(fs%psolv%it,'Pressure iteration')
+         call pfile%add_column(fs%psolv%rerr,'Pressure error')
+         call pfile%write()
          ! Create CFL monitor
          cflfile=monitor(fs%cfg%amRoot,'cfl')
          call cflfile%add_column(time%n,'Timestep number')
@@ -449,8 +467,18 @@ contains
          integer, intent(in) :: i,j,k
          logical :: isIn
          isIn=.false.
-         if (i.eq.pg%imin) isIn=.true.
+         if (pg%ym(j).gt.Hjet.and.i.eq.pg%imin) isIn=.true.
       end function xm_locator
+
+      !> Function that localizes the x- boundary for SC
+      function xm_locator_sc(pg,i,j,k) result(isIn)
+         use pgrid_class, only: pgrid
+         class(pgrid), intent(in) :: pg
+         integer, intent(in) :: i,j,k
+         logical :: isIn
+         isIn=.false.
+         if (pg%ym(j).gt.Hjet.and.i.eq.pg%imin-1) isIn=.true.
+      end function xm_locator_sc
        
       !> Function that localizes the x+ boundary
       function xp_locator(pg,i,j,k) result(isIn)
@@ -459,7 +487,7 @@ contains
          integer, intent(in) :: i,j,k
          logical :: isIn
          isIn=.false.
-         if (i.eq.pg%imax+1) isIn=.true.
+         if (pg%ym(j).gt.Hjet.and.i.eq.pg%imax+1) isIn=.true.
       end function xp_locator
        
       !> Function that localizes y- boundary
@@ -573,20 +601,49 @@ contains
 
          ! Turbulence modeling
          sgs_modeling: block
-           use sgsmodel_class, only: vreman
+           use sgsmodel_class, only: vreman,WALE
            call fs%get_gradu(gradU)
-           call sgs%get_visc(type=vreman,dt=time%dtold,rho=rho0,gradu=gradU)
+           call sgs%get_visc(type=WALE,dt=time%dtold,rho=rho0,gradu=gradU)
          end block sgs_modeling
 
          ! Perform sub-iterations
          do while (time%it.le.time%itmax)
             
             ! ============= SCALAR SOLVER =======================
+
+            ! Reset interpolation metrics to QUICK scheme
+            call sc%metric_reset()
+            
             ! Build mid-time scalar
             sc%SC=0.5_WP*(sc%SC+sc%SCold)
             
             ! Explicit calculation of drhoSC/dt from scalar equation
             call sc%get_drhoSCdt(resSC,fs%rhoU,fs%rhoV,fs%rhoW)
+
+            ! Perform bquick procedure
+            bquick: block
+               integer :: i,j,k
+               ! Assemble explicit residual
+               resSC=time%dt*resSC-(2.0_WP*sc%rho*sc%SC-(sc%rho+sc%rhoold)*sc%SCold)
+               ! Apply it to get explicit scalar prediction
+               tmp1=2.0_WP*sc%SC-sc%SCold+resSC/sc%rho
+               ! Check cells that require bquick
+               do k=sc%cfg%kmino_,sc%cfg%kmaxo_
+                  do j=sc%cfg%jmino_,sc%cfg%jmaxo_
+                     do i=sc%cfg%imino_,sc%cfg%imaxo_
+                        if (tmp1(i,j,k).le.minS.or.tmp1(i,j,k).ge.maxS) then
+                           flag(i,j,k)=.true.
+                        else
+                           flag(i,j,k)=.false.
+                        end if
+                     end do
+                  end do
+               end do
+               ! Adjust metrics
+               call sc%metric_adjust(tmp1,flag)
+               ! Recompute drhoSC/dt
+               call sc%get_drhoSCdt(resSC,fs%rhoU,fs%rhoV,fs%rhoW)
+            end block bquick
             
             ! Assemble explicit residual
             resSC=time%dt*resSC-(2.0_WP*sc%rho*sc%SC-(sc%rho+sc%rhoold)*sc%SCold)
@@ -603,7 +660,7 @@ contains
                use vdscalar_class, only: bcond
                integer :: n,i,j,k
                type(bcond), pointer :: mybc
-               call sc%get_bcond('inflow',mybc)
+               call sc%get_bcond('bottom',mybc)
                do n=1,mybc%itr%no_
                   i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
                   sc%SC(i,j,k)=Sjet
@@ -634,15 +691,11 @@ contains
             ! ===================================================
             
             ! ============ UPDATE PROPERTIES ====================
-            ! Backup rhoSC
-            !resSC=sc%rho*sc%SC
             ! Update density
             call get_rho()
             rho0=sc%rho
             sc%rho=sc%rho*(1.0_WP-lp%VF)
             
-            ! Rescale scalar for conservation
-            !sc%SC=resSC/sc%rho
             ! Update the transport variables
             call get_visc()
             fs%visc=fs%visc+sgs%visc
@@ -702,7 +755,7 @@ contains
                type(bcond), pointer :: mybc
                integer :: n,i,j,k
                real(WP) :: myS
-               call fs%get_bcond('inflow',mybc)
+               call fs%get_bcond('bottom',mybc)
                do n=1,mybc%itr%no_
                   i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
                   myS           =Sjet
@@ -777,6 +830,7 @@ contains
          call sc%get_int()
          call lp%get_max()
          call mfile%write()
+         call pfile%write()
          call cflfile%write()
          call consfile%write()
          call lptfile%write()
@@ -790,7 +844,7 @@ contains
    subroutine simulation_final
       implicit none
       ! Deallocate work arrays
-      deallocate(resSC,resU,resV,resW,Ui,Vi,Wi,srcUlp,srcVlp,srcWlp,rho0,gradU,tmp1,tmp2,tmp3)
+      deallocate(resSC,resU,resV,resW,Ui,Vi,Wi,srcUlp,srcVlp,srcWlp,rho0,gradU,tmp1,tmp2,tmp3,flag)
    end subroutine simulation_final
    
 
