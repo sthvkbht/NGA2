@@ -1,8 +1,8 @@
 # Parallelization
-Partition :	4 1 1
+Partition :	2 2 1
 
 # Mesh definition
-Lx :	0.55
+Lx :	0.62!0.55
 Ly :	0.595
 Lz :	300e-6!0.62
 nx :	768
@@ -43,7 +43,12 @@ Particle velocity:              0 1.06 0
 
 # Time integration
 Max timestep size :	6e-4
-Max cfl number :	   0.9
+Max cfl number :	   	0.9
+Subiterations : 		2
+
+# Pressure solver
+Pressure tolerance : 1e-10
+Pressure iteration : 30
 
 # Ensight output
-Ensight output period : 20e-4
+Ensight output period : 30e-4
