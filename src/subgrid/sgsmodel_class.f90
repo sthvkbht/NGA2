@@ -30,7 +30,7 @@ module sgsmodel_class
       ! Some model parameters
       real(WP) :: Cs_ref=0.17_WP
       real(WP) :: Cartif=2.0_WP,Cartif_vort=1.0e2_WP
-      real(WP) :: Cm2=0.105625_WP                               !< WALE model constant (squared)
+      real(WP) :: Cw=0.325_WP                                   !< WALE model constant
       
       ! LM and MM tensor norms and eddy viscosity
       real(WP), dimension(:,:,:), allocatable :: LM,MM          !< LM and MM tensor norms
@@ -526,7 +526,7 @@ contains
       integer :: i,j,k
       real(WP), dimension(3,3) :: gu2
       real(WP), dimension(6) :: Sd,SR
-      real(WP) :: Sd2,SR2,trace
+      real(WP) :: Sd2,SR2,trace,denom
       ! Prepare magnitude of SR tensor and its symmetric and antisymmetric parts
       do k=this%cfg%kmin_,this%cfg%kmax_
          do j=this%cfg%jmin_,this%cfg%jmax_
@@ -582,7 +582,12 @@ contains
                ! Compute SijSij
                SR2=SR(1)**2+SR(2)**2+SR(3)**2+2.0_WP*(SR(4)**2+SR(5)**2+SR(6)**2)
                ! Compute eddy viscosity
-               this%visc(i,j,k)=rho(i,j,k)*this%Cm2*this%delta(i,j,k)**2*Sd2**1.5_WP/(SR2**2.5_WP+Sd2**1.25_WP+epsilon(1.0_WP))
+               denom=SR2**2.5_WP+Sd2**1.25_WP
+               if (denom.gt.epsilon(1.0_WP)) then
+                  this%visc(i,j,k)=rho(i,j,k)*(this%Cw*this%delta(i,j,k))**2*Sd2**1.5_WP/denom
+               else
+                  this%visc(i,j,k)=0.0_WP
+               end if
             end do
          end do
       end do
