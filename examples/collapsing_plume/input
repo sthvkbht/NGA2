@@ -47,8 +47,8 @@ Max cfl number :	   	0.9
 Subiterations : 		2
 
 # Pressure solver
-Pressure tolerance : 1e-10
+Pressure tolerance : 1e-9
 Pressure iteration : 30
 
 # Ensight output
-Ensight output period : 30e-4
+Ensight output period : 60e-4

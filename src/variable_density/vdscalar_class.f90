@@ -796,10 +796,9 @@ contains
 
 
    !> Adjust adaptive metrics like bquick
-   subroutine metric_adjust(this,SC,flag)
+   subroutine metric_adjust(this,flag)
       implicit none
       class(vdscalar), intent(inout) :: this
-      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: SC   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       logical , dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(in) :: flag !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       integer :: i,j,k
       select case (this%scheme)

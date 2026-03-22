@@ -640,7 +640,7 @@ contains
                   end do
                end do
                ! Adjust metrics
-               call sc%metric_adjust(tmp1,flag)
+               call sc%metric_adjust(flag)
                ! Recompute drhoSC/dt
                call sc%get_drhoSCdt(resSC,fs%rhoU,fs%rhoV,fs%rhoW)
             end block bquick
