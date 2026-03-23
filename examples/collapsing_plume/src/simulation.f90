@@ -1,5 +1,6 @@
 !> Various definitions and tools for running an NGA2 simulation
 module simulation
+  use string,             only: str_medium
    use precision,         only: WP
    use geometry,          only: cfg
    use hypre_str_class,   only: hypre_str
@@ -12,6 +13,7 @@ module simulation
    use ensight_class,     only: ensight
    use partmesh_class,    only: partmesh
    use event_class,       only: event
+   use datafile_class,    only: datafile
    use monitor_class,     only: monitor
    implicit none
    private
@@ -24,6 +26,11 @@ module simulation
    type(lpt),         public :: lp
    type(sgsmodel),    public :: sgs
    type(timetracker), public :: time
+
+   !> Provide a datafile and an event tracker for saving restarts
+   type(event)    :: save_evt
+   type(datafile) :: df
+   logical :: restarted
    
    !> Ensight postprocessing
    type(partmesh) :: pmesh
@@ -151,313 +158,374 @@ contains
      visc=visc_w*(1.0_WP+A*Sc+B*Sc**2)
    end function saltwater_visc
 
-   
+
    !> Initialization of problem solver
    subroutine simulation_init
-      use param, only: param_read
-      implicit none
-      
-      ! Read in EOS parameters
-      call param_read('Temperature',T,default=293.15_WP)
-      call param_read('Pressure',P,default=101325.0_WP)
-      
-      ! Read in inlet parameters
-      call param_read('S jet',Sjet)
-      call param_read('D jet',Djet)
-      call param_read('V jet',Vjet)
-      call param_read('H jet',Hjet)
-      
-      ! Create a low-Mach flow solver with bconds
-      create_velocity_solver: block
-         use hypre_str_class, only: pcg_pfmg
-         use lowmach_class,   only: dirichlet,clipped_neumann
-         real(WP) :: visc
-         ! Create flow solver
-         fs=lowmach(cfg=cfg,name='Variable density low Mach NS')
-         ! Assign acceleration of gravity
-         call param_read('Gravity',fs%gravity)
-         ! Define boundary conditions
-         call fs%add_bcond(name='bottom',type=dirichlet      ,face='y',dir=-1,canCorrect=.false.,locator=ym_locator)
-         call fs%add_bcond(name='top'   ,type=clipped_neumann,face='y',dir=+1,canCorrect=.true. ,locator=yp_locator)
-         call fs%add_bcond(name='left'  ,type=dirichlet,face='x',dir=-1,canCorrect=.false.,locator=xm_locator)
-         call fs%add_bcond(name='right ',type=dirichlet,face='x',dir=+1,canCorrect=.false.,locator=xp_locator)
-         ! Prepare and configure pressure solver
-         ps=hypre_str(cfg=cfg,name='Pressure',method=pcg_pfmg,nst=7)
-         call param_read('Pressure iteration',ps%maxit)
-         call param_read('Pressure tolerance',ps%rcvg)
-         ! Configure implicit velocity solver
-         vs=ddadi(cfg=cfg,name='Velocity',nst=7)
-         ! Setup the solver
-         call fs%setup(pressure_solver=ps,implicit_solver=vs)
-      end block create_velocity_solver
-      
-      ! Create a scalar solver
-      create_scalar: block
-         use vdscalar_class, only: dirichlet,neumann,bquick
-         ! Create scalar solver
-         sc=vdscalar(cfg=cfg,scheme=bquick,name='Salinity')
-         ! Define boundary conditions
-         call sc%add_bcond(name='bottom',type=dirichlet,locator=ym_locator_sc)
-         call sc%add_bcond(name='top'   ,type=neumann  ,locator=yp_locator   ,dir='+y')
-         call sc%add_bcond(name='left'  ,type=neumann  ,locator=xm_locator_sc,dir='-x')
-         call sc%add_bcond(name='right' ,type=neumann  ,locator=xp_locator   ,dir='+x')
-         ! Read in Schmidt number
-         call param_read('Schmidt number',Schmidt)
-         ! Configure implicit scalar solver
-         ss=ddadi(cfg=cfg,name='Scalar',nst=13)
-         ! Setup the solver
-         call sc%setup(implicit_solver=ss)
-      end block create_scalar
-      
-      ! Allocate work arrays
-      allocate_work_arrays: block
-        ! Flow solver
-        allocate(gradU(1:3,1:3,fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
-         allocate(resU(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
-         allocate(resV(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
-         allocate(resW(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
-         allocate(Ui  (fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
-         allocate(Vi  (fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
-         allocate(Wi  (fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
-         ! Scalar solver
-         allocate(resSC(sc%cfg%imino_:sc%cfg%imaxo_,sc%cfg%jmino_:sc%cfg%jmaxo_,sc%cfg%kmino_:sc%cfg%kmaxo_))
-         ! Particle solver
-         allocate(srcUlp  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-         allocate(srcVlp  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-         allocate(srcWlp  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-         allocate(rho0    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-         allocate(tmp1    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-         allocate(tmp2    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-         allocate(tmp3    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-         allocate(flag    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
-       end block allocate_work_arrays
-      
-      ! Initialize time tracker with 2 subiterations
-      initialize_timetracker: block
-         time=timetracker(amRoot=fs%cfg%amRoot,name="plume")
-         call param_read('Max timestep size',time%dtmax)
-         call param_read('Max cfl number',time%cflmax)
-         time%dt=time%dtmax
-         call param_read('Subiterations',time%itmax,default=2)
-      end block initialize_timetracker
-      
-      
-      ! Initialize our LPT
-      initialize_lpt: block
-        use random, only: random_uniform
-        ! Create solver
-        lp=lpt(cfg=cfg,name='LPT')
-        ! Get particle density from the input
-        call param_read('Particle density',lp%rho)
-        ! Set gravity
-        call param_read('Gravity',lp%gravity)
-        ! Set filter scale to 3.5*dx
-        lp%filter_width=3.5_WP*cfg%min_meshsize
-        ! Initialize with zero particles
-        call lp%resize(0)
-        ! Get initial particle volume fraction
-        call lp%update_VF()
-        ! Maximum timestep size used for particles
-        call param_read('Particle timestep size',lp_dt_max,default=huge(1.0_WP))
-        lp_dt=lp_dt_max
-        ! Set collision timescale
-        call param_read('Collision timescale',lp%tau_col,default=15.0_WP*lp_dt_max)
-        ! Set coefficient of restitution
-        call param_read('Coefficient of restitution',lp%e_n)
-        call param_read('Wall restitution',lp%e_w)
-        call param_read('Friction coefficient',lp%mu_f)
-        ! Injection parameters
-        call param_read('Particle mass flow rate',lp%mfr)
-        call param_read('Particle velocity',lp%inj_vel)
-        call param_read('Particle mean diameter',lp%inj_dmean)
-        call param_read('Particle standard deviation',lp%inj_dsd,default=0.0_WP)
-        call param_read('Particle min diameter',lp%inj_dmin,default=tiny(1.0_WP))
-        call param_read('Particle max diameter',lp%inj_dmax,default=huge(1.0_WP))
-        call param_read('Particle diameter shift',lp%inj_dshift,default=0.0_WP)
-        if (lp%inj_dsd.le.epsilon(1.0_WP)) then
-           lp%inj_dmin=lp%inj_dmean
-           lp%inj_dmax=lp%inj_dmean
-        end if
-        lp%inj_d=Djet-lp%inj_dmax
-        lp%inj_pos(2)=lp%cfg%y(lp%cfg%jmin)+lp%inj_dmax
-        lp%inj_pos(1)=0.0_WP; lp%inj_pos(3)=0.0_WP
-        ! Update Gib to be consistent with LPT collisions
-        cfg%Gib=-cfg%Gib
-        cfg%Nib=-cfg%Nib
-      end block initialize_lpt
+     use param, only: param_read
+     implicit none
 
 
-      ! Create partmesh object for Lagrangian particle output
-      create_pmesh: block
-        integer :: i
-        pmesh=partmesh(nvar=1,nvec=1,name='lpt')
-        pmesh%varname(1)='diameter'
-        pmesh%vecname(1)='velocity'
-        call lp%update_partmesh(pmesh)
-        do i=1,lp%np_
-           pmesh%var(1,i)=lp%p(i)%d
-           pmesh%vec(:,1,i)=lp%p(i)%vel
-        end do
-      end block create_pmesh
+     ! Initialize time tracker with 2 subiterations
+     initialize_timetracker: block
+       time=timetracker(amRoot=cfg%amRoot,name="plume")
+       call param_read('Max timestep size',time%dtmax)
+       call param_read('Max cfl number',time%cflmax)
+       time%dt=time%dtmax
+       time%itmax=2
+     end block initialize_timetracker
+
+     
+     ! Handle restart/saves here
+     restart_and_save: block
+       character(len=str_medium) :: timestamp
+       ! Create event for saving restart files
+       save_evt=event(time,'Restart output')
+       call param_read('Restart output period',save_evt%tper)
+       ! Check if we are restarting
+       call param_read(tag='Restart from',val=timestamp,short='r',default='')
+       restarted=.false.; if (len_trim(timestamp).gt.0) restarted=.true.
+       if (restarted) then
+          ! If we are, read the name of the directory
+          call param_read('Restart from',timestamp,'r')
+          ! Read the datafile
+          df=datafile(pg=cfg,fdata='restart/data_'//trim(adjustl(timestamp)))
+       else
+          ! Prepare a new directory for storing files for restart
+          call execute_command_line('mkdir -p restart')
+          ! If we are not restarting, we will still need a datafile for saving restart files
+          df=datafile(pg=cfg,filename=trim(cfg%name),nval=2,nvar=5)
+          df%valname(1)='t'
+          df%valname(2)='dt'
+          df%varname(1)='U'
+          df%varname(2)='V'
+          df%varname(3)='W'
+          df%varname(4)='P'
+          df%varname(5)='S'
+       end if
+     end block restart_and_save
 
 
-      ! Initialize our mixture fraction field
-      initialize_scalar: block
-         use vdscalar_class, only: bcond
-         integer :: n,i,j,k
-         type(bcond), pointer :: mybc
-         real(WP) :: y
-         ! Initialize stratified salinity profile
-         do k=sc%cfg%kmino_,sc%cfg%kmaxo_
-            do j=sc%cfg%jmino_,sc%cfg%jmaxo_
-               do i=sc%cfg%imino_,sc%cfg%imaxo_
-                  y=sc%cfg%ym(j)
-                  sc%SC(i,j,k)=max(0.003153_WP*y**3-167.9_WP*y**2+4.758_WP*y+43.29_WP,0.0_WP)
-               end do
-            end do
-         end do
-         y=sc%cfg%ym(sc%cfg%jmin); minS=max(0.003153_WP*y**3-167.9_WP*y**2+4.758_WP*y+43.29_WP,0.0_WP)
-         y=sc%cfg%ym(sc%cfg%jmax); maxS=max(0.003153_WP*y**3-167.9_WP*y**2+4.758_WP*y+43.29_WP,0.0_WP)
-         ! Apply BCs
-         call sc%get_bcond('bottom',mybc)
-         do n=1,mybc%itr%no_
-            i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-            sc%SC(i,j,k)=Sjet
-         end do
-         ! Compute density
-         call get_rho()
-         ! Compute viscosity and diffusivity
-         call get_visc()
-      end block initialize_scalar
-      
-      ! Initialize our velocity field
-      initialize_velocity: block
-         use lowmach_class, only: bcond
-         integer :: n,i,j,k
-         type(bcond), pointer :: mybc
-         real(WP) :: radius,myS
-         ! Zero initial field
-         fs%U=0.0_WP; fs%V=0.0_WP; fs%W=0.0_WP
-         ! Set density from scalar
-         rho0=sc%rho
-         sc%rho=sc%rho*(1.0_WP-lp%VF); fs%rho=sc%rho
-         
-         ! Form momentum
-         call fs%rho_multiply
-         ! Apply BCs
-         call fs%apply_bcond(time%t,time%dt)
-         call fs%get_bcond('bottom',mybc)
-         do n=1,mybc%itr%no_
-            i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
-            radius=norm2([fs%cfg%xm(i),fs%cfg%zm(k)]-[0.0_WP,0.0_WP])
-            myS           =Sjet
-            fs%V(i,j,k)   =Vjet
-            fs%rhoV(i,j,k)=fs%V(i,j,k)*saltwater_eos(myS,T,P)
-         end do
-         ! Get cell-centered velocities and continuity residual
-         call fs%interp_vel(Ui,Vi,Wi)
-         resSC=0.0_WP; call fs%get_div(drhodt=resSC)
-         ! Compute MFR through all boundary conditions
-         call fs%get_mfr()
+     ! Revisit timetracker to adjust time and time step values if this is a restart
+     update_timetracker: block
+       if (restarted) then
+          call df%pullval(name='t' ,val=time%t )
+          call df%pullval(name='dt',val=time%dt)
+          time%told=time%t-time%dt
+       end if
+     end block update_timetracker
+    
+     
+     ! Create a low-Mach flow solver with bconds
+     create_velocity_solver: block
+       use hypre_str_class, only: pcg_pfmg
+       use lowmach_class,   only: dirichlet,clipped_neumann
+       ! Create flow solver
+       fs=lowmach(cfg=cfg,name='Variable density low Mach NS')
+       ! Assign acceleration of gravity
+       call param_read('Gravity',fs%gravity)
+       ! Read in EOS parameters
+       call param_read('Temperature',T,default=293.15_WP)
+       call param_read('Pressure',P,default=101325.0_WP)
+       ! Read in inlet parameters
+       call param_read('S jet',Sjet)
+       call param_read('D jet',Djet)
+       call param_read('V jet',Vjet)
+       call param_read('H jet',Hjet)
+       ! Define boundary conditions
+       call fs%add_bcond(name='bottom',type=dirichlet      ,face='y',dir=-1,canCorrect=.false.,locator=ym_locator)
+       call fs%add_bcond(name='top'   ,type=clipped_neumann,face='y',dir=+1,canCorrect=.true. ,locator=yp_locator)
+       call fs%add_bcond(name='left'  ,type=dirichlet,face='x',dir=-1,canCorrect=.false.,locator=xm_locator)
+       call fs%add_bcond(name='right ',type=dirichlet,face='x',dir=+1,canCorrect=.false.,locator=xp_locator)
+       ! Prepare and configure pressure solver
+       ps=hypre_str(cfg=cfg,name='Pressure',method=pcg_pfmg,nst=7)
+       call param_read('Pressure iteration',ps%maxit)
+       call param_read('Pressure tolerance',ps%rcvg)
+       ! Configure implicit velocity solver
+       vs=ddadi(cfg=cfg,name='Velocity',nst=7)
+       ! Setup the solver
+       call fs%setup(pressure_solver=ps,implicit_solver=vs)
+     end block create_velocity_solver
+
+     
+     ! Create a scalar solver
+     create_scalar: block
+       use vdscalar_class, only: dirichlet,neumann,bquick
+       ! Create scalar solver
+       sc=vdscalar(cfg=cfg,scheme=bquick,name='Salinity')
+       ! Define boundary conditions
+       call sc%add_bcond(name='bottom',type=dirichlet,locator=ym_locator_sc)
+       call sc%add_bcond(name='top'   ,type=neumann  ,locator=yp_locator   ,dir='+y')
+       call sc%add_bcond(name='left'  ,type=neumann  ,locator=xm_locator_sc,dir='-x')
+       call sc%add_bcond(name='right' ,type=neumann  ,locator=xp_locator   ,dir='+x')
+       ! Read in Schmidt number
+       call param_read('Schmidt number',Schmidt)
+       ! Configure implicit scalar solver
+       ss=ddadi(cfg=cfg,name='Scalar',nst=13)
+       ! Setup the solver
+       call sc%setup(implicit_solver=ss)
+     end block create_scalar
+
+     
+     ! Allocate work arrays
+     allocate_work_arrays: block
+       ! Flow solver
+       allocate(gradU(1:3,1:3,fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
+       allocate(resU(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
+       allocate(resV(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
+       allocate(resW(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
+       allocate(Ui  (fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
+       allocate(Vi  (fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
+       allocate(Wi  (fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_))
+       ! Scalar solver
+       allocate(resSC(sc%cfg%imino_:sc%cfg%imaxo_,sc%cfg%jmino_:sc%cfg%jmaxo_,sc%cfg%kmino_:sc%cfg%kmaxo_))
+       ! Particle solver
+       allocate(srcUlp  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+       allocate(srcVlp  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+       allocate(srcWlp  (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+       allocate(rho0    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+       allocate(tmp1    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+       allocate(tmp2    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+       allocate(tmp3    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+       allocate(flag    (cfg%imino_:cfg%imaxo_,cfg%jmino_:cfg%jmaxo_,cfg%kmino_:cfg%kmaxo_))
+     end block allocate_work_arrays
+
+     
+     ! Initialize our LPT
+     initialize_lpt: block
+       use random, only: random_uniform
+       character(len=str_medium) :: timestamp
+       ! Create solver
+       lp=lpt(cfg=cfg,name='LPT')
+       ! Get particle density from the input
+       call param_read('Particle density',lp%rho)
+       ! Set gravity
+       call param_read('Gravity',lp%gravity)
+       ! Set filter scale to 3.5*dx
+       lp%filter_width=3.5_WP*cfg%min_meshsize
+       ! Initialize particles
+       if (restarted) then
+          call param_read('Restart from',timestamp,'r')
+          ! Read the part file
+          call lp%read(filename='restart/part_'//trim(adjustl(timestamp)))
+       else
+          ! Start with zero particles
+          call lp%resize(0)
+       end if
+       ! Get initial particle volume fraction
+       call lp%update_VF()
+       ! Maximum timestep size used for particles
+       call param_read('Particle timestep size',lp_dt_max,default=huge(1.0_WP))
+       lp_dt=lp_dt_max
+       ! Set collision timescale
+       call param_read('Collision timescale',lp%tau_col,default=15.0_WP*lp_dt_max)
+       ! Set coefficient of restitution
+       call param_read('Coefficient of restitution',lp%e_n)
+       call param_read('Wall restitution',lp%e_w)
+       call param_read('Friction coefficient',lp%mu_f)
+       ! Injection parameters
+       call param_read('Particle mass flow rate',lp%mfr)
+       call param_read('Particle velocity',lp%inj_vel)
+       call param_read('Particle mean diameter',lp%inj_dmean)
+       call param_read('Particle standard deviation',lp%inj_dsd,default=0.0_WP)
+       call param_read('Particle min diameter',lp%inj_dmin,default=tiny(1.0_WP))
+       call param_read('Particle max diameter',lp%inj_dmax,default=huge(1.0_WP))
+       call param_read('Particle diameter shift',lp%inj_dshift,default=0.0_WP)
+       if (lp%inj_dsd.le.epsilon(1.0_WP)) then
+          lp%inj_dmin=lp%inj_dmean
+          lp%inj_dmax=lp%inj_dmean
+       end if
+       lp%inj_d=Djet-lp%inj_dmax
+       lp%inj_pos(2)=lp%cfg%y(lp%cfg%jmin)+lp%inj_dmax
+       lp%inj_pos(1)=0.0_WP; lp%inj_pos(3)=0.0_WP
+       ! Update Gib to be consistent with LPT collisions
+       cfg%Gib=-cfg%Gib
+       cfg%Nib=-cfg%Nib
+     end block initialize_lpt
+
+
+     ! Create partmesh object for Lagrangian particle output
+     create_pmesh: block
+       integer :: i
+       pmesh=partmesh(nvar=1,nvec=1,name='lpt')
+       pmesh%varname(1)='diameter'
+       pmesh%vecname(1)='velocity'
+       call lp%update_partmesh(pmesh)
+       do i=1,lp%np_
+          pmesh%var(1,i)=lp%p(i)%d
+          pmesh%vec(:,1,i)=lp%p(i)%vel
+       end do
+     end block create_pmesh
+
+
+     ! Initialize our mixture fraction field
+     initialize_scalar: block
+       use vdscalar_class, only: bcond
+       integer :: n,i,j,k
+       type(bcond), pointer :: mybc
+       real(WP) :: y
+       if (restarted) then
+          call df%pullvar(name='S',var=sc%SC)
+       else
+          ! Initialize stratified salinity profile
+          do k=sc%cfg%kmino_,sc%cfg%kmaxo_
+             do j=sc%cfg%jmino_,sc%cfg%jmaxo_
+                do i=sc%cfg%imino_,sc%cfg%imaxo_
+                   y=sc%cfg%ym(j)
+                   sc%SC(i,j,k)=max(0.003153_WP*y**3-167.9_WP*y**2+4.758_WP*y+43.29_WP,0.0_WP)
+                end do
+             end do
+          end do
+       end if
+       y=sc%cfg%ym(sc%cfg%jmin); minS=max(0.003153_WP*y**3-167.9_WP*y**2+4.758_WP*y+43.29_WP,0.0_WP)
+       y=sc%cfg%ym(sc%cfg%jmax); maxS=max(0.003153_WP*y**3-167.9_WP*y**2+4.758_WP*y+43.29_WP,0.0_WP)
+       ! Apply BCs
+       call sc%get_bcond('bottom',mybc)
+       do n=1,mybc%itr%no_
+          i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
+          sc%SC(i,j,k)=Sjet
+       end do
+       ! Compute density
+       call get_rho()
+       ! Compute viscosity and diffusivity
+       call get_visc()
+     end block initialize_scalar
+
+     
+     ! Initialize our velocity field
+     initialize_velocity: block
+       use lowmach_class, only: bcond
+       integer :: n,i,j,k
+       type(bcond), pointer :: mybc
+       real(WP) :: radius,myS
+       ! Zero initial field
+       if (restarted) then
+          call df%pullvar(name='U',var=fs%U)
+          call df%pullvar(name='V',var=fs%V)
+          call df%pullvar(name='W',var=fs%W)
+          call df%pullvar(name='P',var=fs%P)
+       else
+          fs%U=0.0_WP; fs%V=0.0_WP; fs%W=0.0_WP; fs%P=0.0_WP
+       end if
+       ! Set density from scalar
+       rho0=sc%rho
+       sc%rho=sc%rho*(1.0_WP-lp%VF); fs%rho=sc%rho
+
+       ! Form momentum
+       call fs%rho_multiply
+       ! Apply BCs
+       call fs%apply_bcond(time%t,time%dt)
+       call fs%get_bcond('bottom',mybc)
+       do n=1,mybc%itr%no_
+          i=mybc%itr%map(1,n); j=mybc%itr%map(2,n); k=mybc%itr%map(3,n)
+          radius=norm2([fs%cfg%xm(i),fs%cfg%zm(k)]-[0.0_WP,0.0_WP])
+          myS           =Sjet
+          fs%V(i,j,k)   =Vjet
+          fs%rhoV(i,j,k)=fs%V(i,j,k)*saltwater_eos(myS,T,P)
+       end do
+       ! Get cell-centered velocities and continuity residual
+       call fs%interp_vel(Ui,Vi,Wi)
+       resSC=0.0_WP; call fs%get_div(drhodt=resSC)
+       ! Compute MFR through all boundary conditions
+       call fs%get_mfr()
      end block initialize_velocity
 
      ! Create an LES model
      create_sgs: block
        sgs=sgsmodel(cfg=fs%cfg,umask=fs%umask,vmask=fs%vmask,wmask=fs%wmask)
      end block create_sgs
-      
-      ! Add Ensight output
-      create_ensight: block
-         ! Create Ensight output from cfg
-         ens_out=ensight(cfg=cfg,name='plume')
-         ! Create event for Ensight output
-         ens_evt=event(time=time,name='Ensight output')
-         call param_read('Ensight output period',ens_evt%tper)
-         ! Add variables to output
-         call ens_out%add_particle('particles',pmesh)
-         call ens_out%add_scalar('levelset',cfg%Gib)
-         call ens_out%add_scalar('pressure',fs%P)
-         call ens_out%add_vector('velocity',Ui,Vi,Wi)
-         call ens_out%add_scalar('density',rho0)
-         call ens_out%add_scalar('viscosity',fs%visc)
-         call ens_out%add_scalar('salinity',sc%SC)
-         call ens_out%add_scalar('epsp',lp%VF)
-         call ens_out%add_scalar('visc_sgs',sgs%visc)
-         ! Output to ensight
-         if (ens_evt%occurs()) call ens_out%write_data(time%t)
-      end block create_ensight
-      
-      ! Create a monitor file
-      create_monitor: block
-         ! Prepare some info about fields
-         call fs%get_cfl(time%dt,time%cfl)
-         call fs%get_max()
-         call sc%get_max()
-         call sc%get_int()
-         ! Create simulation monitor
-         mfile=monitor(fs%cfg%amRoot,'simulation')
-         call mfile%add_column(time%n,'Timestep number')
-         call mfile%add_column(time%t,'Time')
-         call mfile%add_column(time%dt,'Timestep size')
-         call mfile%add_column(time%cfl,'Maximum CFL')
-         call mfile%add_column(fs%Umax,'Umax')
-         call mfile%add_column(fs%Vmax,'Vmax')
-         call mfile%add_column(fs%Wmax,'Wmax')
-         call mfile%add_column(sc%SCmax,'Smax')
-         call mfile%add_column(sc%SCmin,'Smin')
-         call mfile%add_column(sc%rhomax,'RHOmax')
-         call mfile%add_column(sc%rhomin,'RHOmin')
-         call mfile%write()
-         ! Create pressure monitor
-         pfile=monitor(fs%cfg%amRoot,'pressure')
-         call pfile%add_column(time%n,'Timestep number')
-         call pfile%add_column(time%t,'Time')
-         call pfile%add_column(fs%Pmax,'Pmax')
-         call pfile%add_column(int_RP,'Int(RP)')
-         call pfile%add_column(fs%divmax,'Maximum divergence')
-         call pfile%add_column(fs%psolv%it,'Pressure iteration')
-         call pfile%add_column(fs%psolv%rerr,'Pressure error')
-         call pfile%write()
-         ! Create CFL monitor
-         cflfile=monitor(fs%cfg%amRoot,'cfl')
-         call cflfile%add_column(time%n,'Timestep number')
-         call cflfile%add_column(time%t,'Time')
-         call cflfile%add_column(fs%CFLc_x,'Convective xCFL')
-         call cflfile%add_column(fs%CFLc_y,'Convective yCFL')
-         call cflfile%add_column(fs%CFLc_z,'Convective zCFL')
-         call cflfile%add_column(fs%CFLv_x,'Viscous xCFL')
-         call cflfile%add_column(fs%CFLv_y,'Viscous yCFL')
-         call cflfile%add_column(fs%CFLv_z,'Viscous zCFL')
-         call cflfile%add_column(lp%CFL_col,'Collision CFL')
-         call cflfile%write()
-         ! Create conservation monitor
-         consfile=monitor(fs%cfg%amRoot,'conservation')
-         call consfile%add_column(time%n,'Timestep number')
-         call consfile%add_column(time%t,'Time')
-         call consfile%add_column(sc%SCint,'SC integral')
-         call consfile%add_column(sc%rhoint,'RHO integral')
-         call consfile%add_column(sc%rhoSCint,'rhoSC integral')
-         call consfile%write()
-         ! Create LPT monitor
-         lptfile=monitor(amroot=lp%cfg%amRoot,name='lpt')
-         call lptfile%add_column(time%n,'Timestep number')
-         call lptfile%add_column(time%t,'Time')
-         call lptfile%add_column(lp_dt,'Particle dt')
-         call lptfile%add_column(lp_iter,'Particle iter')
-         call lptfile%add_column(lp%np,'Particle number')
-         call lptfile%add_column(lp%VFmean,'VFp mean')
-         call lptfile%add_column(lp%VFmax,'VFp max')
-         call lptfile%add_column(lp%Umin,'Particle Umin')
-         call lptfile%add_column(lp%Umax,'Particle Umax')
-         call lptfile%add_column(lp%Vmin,'Particle Vmin')
-         call lptfile%add_column(lp%Vmax,'Particle Vmax')
-         call lptfile%add_column(lp%Wmin,'Particle Wmin')
-         call lptfile%add_column(lp%Wmax,'Particle Wmax')
-         call lptfile%add_column(lp%dmin,'Particle dmin')
-         call lptfile%add_column(lp%dmax,'Particle dmax')
-         call lptfile%write()
-      end block create_monitor
-      
+
+     ! Add Ensight output
+     create_ensight: block
+       ! Create Ensight output from cfg
+       ens_out=ensight(cfg=cfg,name='plume')
+       ! Create event for Ensight output
+       ens_evt=event(time=time,name='Ensight output')
+       call param_read('Ensight output period',ens_evt%tper)
+       ! Add variables to output
+       call ens_out%add_particle('particles',pmesh)
+       call ens_out%add_scalar('levelset',cfg%Gib)
+       call ens_out%add_scalar('pressure',fs%P)
+       call ens_out%add_vector('velocity',Ui,Vi,Wi)
+       call ens_out%add_scalar('density',rho0)
+       call ens_out%add_scalar('viscosity',fs%visc)
+       call ens_out%add_scalar('salinity',sc%SC)
+       call ens_out%add_scalar('epsp',lp%VF)
+       call ens_out%add_scalar('visc_sgs',sgs%visc)
+       ! Output to ensight
+       if (ens_evt%occurs()) call ens_out%write_data(time%t)
+     end block create_ensight
+
+     ! Create a monitor file
+     create_monitor: block
+       ! Prepare some info about fields
+       call fs%get_cfl(time%dt,time%cfl)
+       call fs%get_max()
+       call sc%get_max()
+       call sc%get_int()
+       ! Create simulation monitor
+       mfile=monitor(fs%cfg%amRoot,'simulation')
+       call mfile%add_column(time%n,'Timestep number')
+       call mfile%add_column(time%t,'Time')
+       call mfile%add_column(time%dt,'Timestep size')
+       call mfile%add_column(time%cfl,'Maximum CFL')
+       call mfile%add_column(fs%Umax,'Umax')
+       call mfile%add_column(fs%Vmax,'Vmax')
+       call mfile%add_column(fs%Wmax,'Wmax')
+       call mfile%add_column(sc%SCmax,'Smax')
+       call mfile%add_column(sc%SCmin,'Smin')
+       call mfile%add_column(sc%rhomax,'RHOmax')
+       call mfile%add_column(sc%rhomin,'RHOmin')
+       call mfile%write()
+       ! Create pressure monitor
+       pfile=monitor(fs%cfg%amRoot,'pressure')
+       call pfile%add_column(time%n,'Timestep number')
+       call pfile%add_column(time%t,'Time')
+       call pfile%add_column(fs%Pmax,'Pmax')
+       call pfile%add_column(int_RP,'Int(RP)')
+       call pfile%add_column(fs%divmax,'Maximum divergence')
+       call pfile%add_column(fs%psolv%it,'Pressure iteration')
+       call pfile%add_column(fs%psolv%rerr,'Pressure error')
+       call pfile%write()
+       ! Create CFL monitor
+       cflfile=monitor(fs%cfg%amRoot,'cfl')
+       call cflfile%add_column(time%n,'Timestep number')
+       call cflfile%add_column(time%t,'Time')
+       call cflfile%add_column(fs%CFLc_x,'Convective xCFL')
+       call cflfile%add_column(fs%CFLc_y,'Convective yCFL')
+       call cflfile%add_column(fs%CFLc_z,'Convective zCFL')
+       call cflfile%add_column(fs%CFLv_x,'Viscous xCFL')
+       call cflfile%add_column(fs%CFLv_y,'Viscous yCFL')
+       call cflfile%add_column(fs%CFLv_z,'Viscous zCFL')
+       call cflfile%add_column(lp%CFL_col,'Collision CFL')
+       call cflfile%write()
+       ! Create conservation monitor
+       consfile=monitor(fs%cfg%amRoot,'conservation')
+       call consfile%add_column(time%n,'Timestep number')
+       call consfile%add_column(time%t,'Time')
+       call consfile%add_column(sc%SCint,'SC integral')
+       call consfile%add_column(sc%rhoint,'RHO integral')
+       call consfile%add_column(sc%rhoSCint,'rhoSC integral')
+       call consfile%write()
+       ! Create LPT monitor
+       lptfile=monitor(amroot=lp%cfg%amRoot,name='lpt')
+       call lptfile%add_column(time%n,'Timestep number')
+       call lptfile%add_column(time%t,'Time')
+       call lptfile%add_column(lp_dt,'Particle dt')
+       call lptfile%add_column(lp_iter,'Particle iter')
+       call lptfile%add_column(lp%np,'Particle number')
+       call lptfile%add_column(lp%VFmean,'VFp mean')
+       call lptfile%add_column(lp%VFmax,'VFp max')
+       call lptfile%add_column(lp%Umin,'Particle Umin')
+       call lptfile%add_column(lp%Umax,'Particle Umax')
+       call lptfile%add_column(lp%Vmin,'Particle Vmin')
+       call lptfile%add_column(lp%Vmax,'Particle Vmax')
+       call lptfile%add_column(lp%Wmin,'Particle Wmin')
+       call lptfile%add_column(lp%Wmax,'Particle Wmax')
+       call lptfile%add_column(lp%dmin,'Particle dmin')
+       call lptfile%add_column(lp%dmax,'Particle dmax')
+       call lptfile%write()
+     end block create_monitor
+
    contains
 
       !> Function that localizes the x- boundary
@@ -834,7 +902,26 @@ contains
          call cflfile%write()
          call consfile%write()
          call lptfile%write()
-         
+
+         ! Finally, see if it's time to save restart files
+         if (save_evt%occurs()) then
+            save_restart: block
+              character(len=str_medium) :: timestamp
+              ! Prefix for files
+              write(timestamp,'(es12.5)') time%t
+              ! Populate df and write it
+              call df%pushval(name='t' ,val=time%t )
+              call df%pushval(name='dt',val=time%dt)
+              call df%pushvar(name='U' ,var=fs%U   )
+              call df%pushvar(name='V' ,var=fs%V   )
+              call df%pushvar(name='W' ,var=fs%W   )
+              call df%pushvar(name='P' ,var=fs%P   )
+              call df%pushvar(name='S' ,var=sc%SC  )
+              call df%write(fdata='restart/data_'//trim(adjustl(timestamp)))
+              ! Write particle file
+              call lp%write(filename='restart/part_'//trim(adjustl(timestamp)))
+            end block save_restart
+         end if
       end do
       
    end subroutine simulation_run
