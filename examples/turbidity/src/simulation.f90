@@ -160,6 +160,8 @@ contains
       logical :: overlap
       ! Create solver
       lp=lpt(cfg=cfg,name='LPT')
+      ! Set gravity
+      call param_read('Gravity',lp%gravity)
       ! Get particle density from the input
       call param_read('Particle density',lp%rho)
       ! Get average particle volume fraction from the input
@@ -168,6 +170,12 @@ contains
       call param_read('Particle diameter',dp)
       ! Get the particle bed width from the input
       call param_read('Bed width',Wbed)
+      ! Set collision timescale
+      call param_read('Collision timescale',lp%tau_col,default=15.0_WP*time%dt)
+      ! Set coefficient of restitution
+      call param_read('Coefficient of restitution',lp%e_n)
+      call param_read('Wall restitution',lp%e_w,default=lp%e_n)
+      call param_read('Friction coefficient',lp%mu_f,default=0.0_WP)
       ! Set filter scale to 3.5*dx
       lp%filter_width=3.5_WP*cfg%min_meshsize
       ! Maximum timestep size used for particles
@@ -221,7 +229,8 @@ contains
          ipic(npic(ip,jp,kp),ip,jp,kp)=i
          ! Give zero velocity
          lp%p(i)%vel=0.0_WP
-         ! Give zero collision force
+         ! Give zero forces
+         lp%p(i)%Afluid=0.0_WP
          lp%p(i)%Acol=0.0_WP
          lp%p(i)%Tcol=0.0_WP
          ! Give zero dt
@@ -248,19 +257,6 @@ contains
       end if
       ! Get initial particle volume fraction
       call lp%update_VF()
-      ! Set collision timescale
-      call param_read('Collision timescale',lp%tau_col,default=15.0_WP*time%dt)
-      ! Set coefficient of restitution
-      call param_read('Coefficient of restitution',lp%e_n)
-      call param_read('Wall restitution',lp%e_w,default=lp%e_n)
-      call param_read('Friction coefficient',lp%mu_f,default=0.0_WP)
-      ! Set gravity
-      call param_read('Gravity',lp%gravity)
-      if (lp%cfg%amRoot) then
-         print*,"===== Particle Setup Description ====="
-         print*,'Number of particles', np
-         print*,'Mean volume fraction',VFavg
-      end if
       ! Compute initial front position and velocity
       call get_front()
     end block initialize_lpt
@@ -432,7 +428,6 @@ contains
             ! Decide the timestep size
             mydt=min(lp_dt,time%dtmid-dt_done)
             ! Collide and advance particles
-            call lp%collide(dt=mydt)
             call lp%advance(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,&
             &               stress_x=resU         ,stress_y=resV         ,stress_z=resW         ,&
             &               acc_x   =acc (1,:,:,:),acc_y   =acc (2,:,:,:),acc_z   =acc (3,:,:,:),&

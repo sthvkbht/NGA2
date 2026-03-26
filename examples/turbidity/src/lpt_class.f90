@@ -30,6 +30,7 @@ module lpt_class
      real(WP), dimension(3) :: pos        !< Particle center coordinates
      real(WP), dimension(3) :: vel        !< Velocity of particle
      real(WP), dimension(3) :: angVel     !< Angular velocity of particle
+     real(WP), dimension(3) :: Afluid     !< Fluid acceleration
      real(WP), dimension(3) :: Acol       !< Collision acceleration
      real(WP), dimension(3) :: Tcol       !< Collision torque
      real(WP) :: dt                       !< Time step size for the particle
@@ -39,7 +40,7 @@ module lpt_class
   end type part
   !> Number of blocks, block length, and block types in a particle
   integer, parameter                         :: part_nblock=3
-  integer           , dimension(part_nblock) :: part_lblock=[1,17,4]
+  integer           , dimension(part_nblock) :: part_lblock=[1,20,4]
   type(MPI_Datatype), dimension(part_nblock) :: part_tblock=[MPI_INTEGER8,MPI_DOUBLE_PRECISION,MPI_INTEGER]
   !> MPI_PART derived datatype and size
   type(MPI_Datatype) :: MPI_PART
@@ -687,7 +688,7 @@ contains
   &                  acc_x   ,acc_y   ,acc_z   ,&
   &                  vort_x  ,vort_y  ,vort_z  ,&
   &                  srcU    ,srcV    ,srcW    )
-    use mpi_f08, only : MPI_SUM,MPI_INTEGER
+    use mpi_f08, only : MPI_SUM,MPI_INTEGER,MPI_IN_PLACE
     use mathtools, only: Pi
     implicit none
     class(lpt), intent(inout) :: this
@@ -710,9 +711,8 @@ contains
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: srcV      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: srcW      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     integer :: i,ierr
-    real(WP) :: mydt,dt_done,Ip
-    real(WP), dimension(3) :: acc,fdbk,torque,dmom
-    type(part) :: myp,pold
+    real(WP) :: Ip
+    real(WP), dimension(3) :: fdbk,dmom
 
     ! Zero out source term arrays
     srcU=0.0_WP
@@ -722,78 +722,69 @@ contains
     ! Zero out number of particles removed
     this%np_out=0
 
-    ! Advance the equations
+    ! Advance velocity based on old force and position based on mid-velocity
     do i=1,this%np_
        ! Avoid particles with id=0
        if (this%p(i)%id.eq.0) cycle
-       ! Create local copy of particle
-       myp=this%p(i)
-       ! Time-integrate until dt_done=dt
-       dt_done=0.0_WP
-       do while (dt_done.lt.dt)
-          ! Decide the timestep size
-          mydt=min(myp%dt,dt-dt_done)
-          ! Remember the particle
-          pold=myp
-          ! Particle moment of inertia per unit mass
-          Ip = 0.1_WP*myp%d**2
-          ! Advance with Euler prediction
-          call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,&
-          &                 stress_x=stress_x,stress_y=stress_y,stress_z=stress_z,&
-          &                 acc_x   =acc_x   ,acc_y   =acc_y   ,acc_z   =acc_z   ,&
-          &                 vort_x  =vort_x  ,vort_y  =vort_y  ,vort_z  =vort_z  ,&
-          &                 p=myp,acc=acc,fdbk=fdbk,torque=torque,opt_dt=myp%dt)
-          myp%pos=pold%pos+0.5_WP*mydt*myp%vel
-          myp%vel=pold%vel+0.5_WP*mydt*(acc+this%gravity+myp%Acol)
-          myp%angVel=pold%angVel+0.5_WP*mydt*(torque+myp%Tcol)/Ip
-          ! Correct with midpoint rule
-          call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,&
-          &                 stress_x=stress_x,stress_y=stress_y,stress_z=stress_z,&
-          &                 acc_x   =acc_x   ,acc_y   =acc_y   ,acc_z   =acc_z   ,&
-          &                 vort_x  =vort_x  ,vort_y  =vort_y  ,vort_z  =vort_z  ,&
-          &                 p=myp,acc=acc,fdbk=fdbk,torque=torque,opt_dt=myp%dt)
-          myp%pos=pold%pos+mydt*myp%vel
-          myp%vel=pold%vel+mydt*(acc+this%gravity+myp%Acol)
-          myp%angVel=pold%angVel+mydt*(torque+myp%Tcol)/Ip
-          ! Relocalize
-          myp%ind=this%cfg%get_ijk_global(myp%pos,myp%ind)
-          ! Send source term back to the mesh
-          dmom=mydt*fdbk*this%rho*Pi/6.0_WP*myp%d**3
-          if (this%cfg%nx.gt.1) call this%cfg%set_scalar(Sp=-dmom(1),pos=myp%pos,i0=myp%ind(1),j0=myp%ind(2),k0=myp%ind(3),S=srcU,bc='n')
-          if (this%cfg%ny.gt.1) call this%cfg%set_scalar(Sp=-dmom(2),pos=myp%pos,i0=myp%ind(1),j0=myp%ind(2),k0=myp%ind(3),S=srcV,bc='n')
-          if (this%cfg%nz.gt.1) call this%cfg%set_scalar(Sp=-dmom(3),pos=myp%pos,i0=myp%ind(1),j0=myp%ind(2),k0=myp%ind(3),S=srcW,bc='n')
-          ! Increment
-          dt_done=dt_done+mydt
-       end do
+       ! Particle moment of inertia per unit mass
+       Ip=0.1_WP*this%p(i)%d**2
+       ! Half-step velocity
+       this%p(i)%vel   =this%p(i)%vel   +0.5_WP*dt*(this%p(i)%Afluid+this%p(i)%Acol+this%gravity)
+       this%p(i)%angVel=this%p(i)%angVel+0.5_WP*dt*(this%p(i)%Tcol/Ip)
+       ! Full-step position update
+       this%p(i)%pos=this%p(i)%pos+dt*this%p(i)%vel
        ! Correct the position to take into account periodicity
-       if (this%cfg%xper) myp%pos(1)=this%cfg%x(this%cfg%imin)+modulo(myp%pos(1)-this%cfg%x(this%cfg%imin),this%cfg%xL)
-       if (this%cfg%yper) myp%pos(2)=this%cfg%y(this%cfg%jmin)+modulo(myp%pos(2)-this%cfg%y(this%cfg%jmin),this%cfg%yL)
-       if (this%cfg%zper) myp%pos(3)=this%cfg%z(this%cfg%kmin)+modulo(myp%pos(3)-this%cfg%z(this%cfg%kmin),this%cfg%zL)
+       if (this%cfg%xper) this%p(i)%pos(1)=this%cfg%x(this%cfg%imin)+modulo(this%p(i)%pos(1)-this%cfg%x(this%cfg%imin),this%cfg%xL)
+       if (this%cfg%yper) this%p(i)%pos(2)=this%cfg%y(this%cfg%jmin)+modulo(this%p(i)%pos(2)-this%cfg%y(this%cfg%jmin),this%cfg%yL)
+       if (this%cfg%zper) this%p(i)%pos(3)=this%cfg%z(this%cfg%kmin)+modulo(this%p(i)%pos(3)-this%cfg%z(this%cfg%kmin),this%cfg%zL)
        ! Handle particles that have left the domain
-       if (myp%pos(1).lt.this%cfg%x(this%cfg%imin).or.myp%pos(1).gt.this%cfg%x(this%cfg%imax+1)) myp%flag=1
-       if (myp%pos(2).lt.this%cfg%y(this%cfg%jmin).or.myp%pos(2).gt.this%cfg%y(this%cfg%jmax+1)) myp%flag=1
-       if (myp%pos(3).lt.this%cfg%z(this%cfg%kmin).or.myp%pos(3).gt.this%cfg%z(this%cfg%kmax+1)) myp%flag=1
+       if (this%p(i)%pos(1).lt.this%cfg%x(this%cfg%imin).or.this%p(i)%pos(1).gt.this%cfg%x(this%cfg%imax+1)) this%p(i)%flag=1
+       if (this%p(i)%pos(2).lt.this%cfg%y(this%cfg%jmin).or.this%p(i)%pos(2).gt.this%cfg%y(this%cfg%jmax+1)) this%p(i)%flag=1
+       if (this%p(i)%pos(3).lt.this%cfg%z(this%cfg%kmin).or.this%p(i)%pos(3).gt.this%cfg%z(this%cfg%kmax+1)) this%p(i)%flag=1
        ! Relocalize the particle
-       myp%ind=this%cfg%get_ijk_global(myp%pos,myp%ind)
+       this%p(i)%ind=this%cfg%get_ijk_global(this%p(i)%pos,this%p(i)%ind)
        ! Count number of particles removed
-       if (myp%flag.eq.1) this%np_out=this%np_out+1
-       ! Copy back to particle
-       if (myp%id.ne.-1) this%p(i)=myp
+       if (this%p(i)%flag.eq.1) this%np_out=this%np_out+1
     end do
 
     ! Communicate particles
     call this%sync()
 
     ! Sum up particles removed
-    call MPI_ALLREDUCE(this%np_out,i,1,MPI_INTEGER,MPI_SUM,this%cfg%comm,ierr); this%np_out=i
+    call MPI_ALLREDUCE(MPI_IN_PLACE,this%np_out,1,MPI_INTEGER,MPI_SUM,this%cfg%comm,ierr)
+
+    ! Recompute volume fraction
+    call this%update_VF()
+
+    ! Update collisions
+    call this%collide(dt=dt)
+
+    ! Advance velocity only based on new force
+    do i=1,this%np_
+       ! Avoid particles with id=0
+       if (this%p(i)%id.eq.0) cycle
+       ! Update fluid acceleration
+       call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,&
+       &                 stress_x=stress_x,stress_y=stress_y,stress_z=stress_z,&
+       &                 acc_x   =acc_x   ,acc_y   =acc_y   ,acc_z   =acc_z   ,&
+       &                 vort_x  =vort_x  ,vort_y  =vort_y  ,vort_z  =vort_z  ,&
+       &                 p=this%p(i),fdbk=fdbk)
+       ! Particle moment of inertia per unit mass
+       Ip=0.1_WP*this%p(i)%d**2
+       ! Advance with Verlet scheme
+       this%p(i)%vel   =this%p(i)%vel   +0.5_WP*dt*(this%p(i)%Afluid+this%p(i)%Acol+this%gravity)
+       this%p(i)%angVel=this%p(i)%angVel+0.5_WP*dt*(this%p(i)%Tcol/Ip)
+       ! Send source term back to the mesh
+       dmom=dt*fdbk*this%rho*Pi/6.0_WP*this%p(i)%d**3
+       if (this%cfg%nx.gt.1) call this%cfg%set_scalar(Sp=-dmom(1),pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=srcU,bc='n')
+       if (this%cfg%ny.gt.1) call this%cfg%set_scalar(Sp=-dmom(2),pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=srcV,bc='n')
+       if (this%cfg%nz.gt.1) call this%cfg%set_scalar(Sp=-dmom(3),pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=srcW,bc='n')
+    end do
 
     ! Divide source arrays by volume, sum at boundaries, and volume filter
     srcU=srcU/this%cfg%vol; call this%cfg%syncsum(srcU); call this%filter(srcU)
     srcV=srcV/this%cfg%vol; call this%cfg%syncsum(srcV); call this%filter(srcV)
     srcW=srcW/this%cfg%vol; call this%cfg%syncsum(srcW); call this%filter(srcW)
-
-    ! Recompute volume fraction
-    call this%update_VF()
 
     ! Log/screen output
     logging: block
@@ -817,7 +808,7 @@ contains
    &                 stress_x,stress_y,stress_z,&
    &                 acc_x   ,acc_y   ,acc_z   ,&
    &                 vort_x  ,vort_y  ,vort_z  ,&
-   &                 p,acc,fdbk,torque,opt_dt)
+   &                 p,fdbk)
     implicit none
     class(lpt), intent(inout) :: this
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: U         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
@@ -834,9 +825,8 @@ contains
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: vort_x    !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: vort_y    !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
     real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: vort_z    !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-    type(part), intent(in) :: p
-    real(WP), dimension(3), intent(out) :: acc,torque,fdbk
-    real(WP), intent(out) :: opt_dt
+    type(part), intent(inout) :: p
+    real(WP), dimension(3), intent(out) :: fdbk
     real(WP) :: fvisc,frho,pVF,fVF
     real(WP), dimension(3) :: fvel,fstress,fvort,facc
 
@@ -872,10 +862,9 @@ contains
       corr=(1.0_WP+0.15_WP*Re**(0.687_WP))*(78.96_WP*pVF**3-18.63_WP*pVF**2+9.845_WP*pVF+1.0_WP)
       ! Particle response time
       tau=this%rho*p%d**2/(18.0_WP*fvisc*corr)
-      ! Return acceleration and optimal timestep size
-      acc=(fvel-p%vel)/tau+fstress/this%rho
-      fdbk=acc
-      opt_dt=tau/real(this%nstep,WP)
+      ! Return acceleration
+      p%Afluid=(fvel-p%vel)/tau+fstress/this%rho
+      fdbk=p%Afluid
     end block compute_drag
 
     ! Compute acceleration due to Saffman lift
@@ -888,9 +877,8 @@ contains
         Reg=p%d**2*omegag*frho/fvisc
         Cl=9.69_WP/Pi/p%d**2/this%rho*fvisc*sqrt(Reg)
         accl=Cl*cross_product(fvel-p%vel,fvort/omegag)
-        acc =acc +accl
+        p%Afluid =p%Afluid +accl
         fdbk=fdbk+accl
-        opt_dt=min(opt_dt,1.0_WP/(Cl*real(this%nstep,WP)))
       end if
     end block compute_lift
 
@@ -900,14 +888,14 @@ contains
       real(WP), dimension(3) :: dupdt,dufdt
       Cadd=0.5_WP*frho/this%rho
       dufdt=facc
-      dupdt=acc+this%gravity+p%Acol
-      acc =acc +Cadd/(1.0_WP+Cadd)*(dufdt-dupdt)
-      fdbk=fdbk+Cadd*(dufdt-(acc+this%gravity+p%Acol))
+      dupdt=p%Afluid+this%gravity+p%Acol
+      p%Afluid=p%Afluid+Cadd/(1.0_WP+Cadd)*(dufdt-dupdt)
+      fdbk=fdbk+Cadd*(dufdt-(p%Afluid+this%gravity+p%Acol))
     end block compute_added_mass
 
     ! Compute fluid torque (assumed Stokes drag)
     compute_torque: block
-      torque=6.0_WP*fvisc*(0.5_WP*fvort-p%angVel)/this%rho
+      p%Tcol=p%Tcol+6.0_WP*fvisc*(0.5_WP*fvort-p%angVel)/this%rho
     end block compute_torque
 
   end subroutine get_rhs
