@@ -203,11 +203,10 @@ module simulation
                lp%p(i)%id=int(i,8)
                ! Give zero velocity
                lp%p(i)%vel=0.0_WP
-               ! Give zero collision force
+               ! Give zero forces
+               lp%p(i)%Afluid=0.0_WP
                lp%p(i)%Acol=0.0_WP
                lp%p(i)%Tcol=0.0_WP
-               ! Give zero dt
-               lp%p(i)%dt=0.0_WP
                ! Locate the particle on the mesh
                lp%p(i)%ind=lp%cfg%get_ijk_global(lp%p(i)%pos,[lp%cfg%imin,lp%cfg%jmin,lp%cfg%kmin])
                ! Activate the particle
@@ -381,7 +380,7 @@ module simulation
          call time%increment()
 
          ! Remember old density, velocity, and momentum
-         fs%rhoold=fs%rho
+         fs%RHOold=fs%RHO
          fs%Uold=fs%U; fs%rhoUold=fs%rhoU
          fs%Vold=fs%V; fs%rhoVold=fs%rhoV
          fs%Wold=fs%W; fs%rhoWold=fs%rhoW
@@ -409,10 +408,9 @@ module simulation
            do while (dt_done.lt.time%dtmid)
               ! Decide the timestep size
               mydt=min(lp_dt,time%dtmid-dt_done)
-              ! Collide and advance particles
-              call lp%collide(dt=mydt)
-              call lp%advance(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
-                   srcU=tmp1,srcV=tmp2,srcW=tmp3)
+              ! Advance particles
+              call lp%advance_verlet(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
+                   srcU=tmp1,srcV=tmp2,srcW=tmp3,collide=.true.)
               srcUlp=srcUlp+tmp1
               srcVlp=srcVlp+tmp2
               srcWlp=srcWlp+tmp3
@@ -420,7 +418,7 @@ module simulation
               dt_done=dt_done+mydt
            end do
            ! Update density based on particle volume fraction
-           fs%rho=rho*(1.0_WP-lp%VF)
+           fs%RHO=rho*(1.0_WP-lp%VF)
            dRHOdt=(fs%RHO-fs%RHOold)/time%dtmid
          end block lpt
 

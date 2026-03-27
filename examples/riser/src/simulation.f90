@@ -295,11 +295,10 @@ contains
             ipic(npic(ip,jp,kp),ip,jp,kp)=i
             ! Give zero velocity
             lp%p(i)%vel=0.0_WP
-            ! Give zero collision force
+            ! Give zero forces
+            lp%p(i)%Afluid=0.0_WP
             lp%p(i)%Acol=0.0_WP
             lp%p(i)%Tcol=0.0_WP
-            ! Give zero dt
-            lp%p(i)%dt=0.0_WP
             ! Sum up volume
             sumVolp=sumVolp+Pi/6.0_WP*lp%p(i)%d**3
             meand=meand+lp%p(i)%d
@@ -492,9 +491,8 @@ contains
             ! Decide the timestep size
             mydt=min(lp_dt,time%dtmid-dt_done)
             ! Collide and advance particles
-            call lp%collide(dt=mydt,Gib=cfg%Gib,Nxib=cfg%Nib(1,:,:,:),Nyib=cfg%Nib(2,:,:,:),Nzib=cfg%Nib(3,:,:,:))
-            call lp%advance(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
-                 srcU=tmp1,srcV=tmp2,srcW=tmp3)
+            call lp%advance_verlet(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
+                 srcU=tmp1,srcV=tmp2,srcW=tmp3,Gib=cfg%Gib,collide=.true.)
             srcUlp=srcUlp+tmp1
             srcVlp=srcVlp+tmp2
             srcWlp=srcWlp+tmp3

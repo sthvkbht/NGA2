@@ -216,6 +216,7 @@ contains
             lp%p(i)%pos=[random_uniform(lp%cfg%x(lp%cfg%imin_),lp%cfg%x(lp%cfg%imax_+1)-dp),&
                  &       random_uniform(lp%cfg%y(lp%cfg%jmin_),lp%cfg%y(lp%cfg%jmax_+1)-dp),&
                  &       random_uniform(lp%cfg%z(lp%cfg%kmin_),lp%cfg%z(lp%cfg%kmax_+1)-dp)]
+            if (cfg%nz.eq.1) lp%p(i)%pos(3)=0.0_WP
             lp%p(i)%ind=lp%cfg%get_ijk_global(lp%p(i)%pos,[lp%cfg%imin,lp%cfg%jmin,lp%cfg%kmin])
             overlap=.false.
             do kk=lp%p(i)%ind(3)-1,lp%p(i)%ind(3)+1
@@ -239,12 +240,11 @@ contains
          lp%p(i)%vel=0.0_WP
          lp%p(i)%vel(1)=up
          if (amp.gt.0.0_WP) lp%p(i)%vel=lp%p(i)%vel+[random_uniform(-amp,amp),random_uniform(-amp,amp),random_uniform(-amp,amp)]
-
-         ! Give zero collision force
+         if (cfg%nz.eq.1) lp%p(i)%vel(3)=0.0_WP
+         ! Give zero forces
+         lp%p(i)%Afluid=0.0_WP
          lp%p(i)%Acol=0.0_WP
          lp%p(i)%Tcol=0.0_WP
-         ! Give zero dt
-         lp%p(i)%dt=0.0_WP
          ! Sum up volume
          sumVolp=sumVolp+Pi/6.0_WP*lp%p(i)%d**3
       end do
@@ -441,10 +441,9 @@ contains
          do while (dt_done.lt.time%dtmid)
             ! Decide the timestep size
             mydt=min(lp_dt,time%dtmid-dt_done)
-            ! Collide and advance particles
-            call lp%collide(dt=mydt)
-            call lp%advance(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
-                 srcU=tmp1,srcV=tmp2,srcW=tmp3)
+            ! Advance particles
+            call lp%advance_verlet(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
+                 srcU=tmp1,srcV=tmp2,srcW=tmp3,collide=.true.)
             srcUlp=srcUlp+tmp1
             srcVlp=srcVlp+tmp2
             srcWlp=srcWlp+tmp3

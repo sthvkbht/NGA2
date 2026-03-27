@@ -30,6 +30,7 @@ module lpt_class
       real(WP), dimension(3) :: pos        !< Particle center coordinates
       real(WP), dimension(3) :: vel        !< Velocity of particle
       real(WP), dimension(3) :: angVel     !< Angular velocity of particle
+      real(WP), dimension(3) :: Afluid     !< Fluid acceleration
       real(WP), dimension(3) :: Acol       !< Collision acceleration
       real(WP), dimension(3) :: Tcol       !< Collision torque
       real(WP) :: dt                       !< Time step size for the particle
@@ -39,7 +40,7 @@ module lpt_class
    end type part
    !> Number of blocks, block length, and block types in a particle
    integer, parameter                         :: part_nblock=3
-   integer           , dimension(part_nblock) :: part_lblock=[1,17,4]
+   integer           , dimension(part_nblock) :: part_lblock=[1,20,4]
    type(MPI_Datatype), dimension(part_nblock) :: part_tblock=[MPI_INTEGER8,MPI_DOUBLE_PRECISION,MPI_INTEGER]
    !> MPI_PART derived datatype and size
    type(MPI_Datatype) :: MPI_PART
@@ -127,7 +128,8 @@ module lpt_class
    contains
       procedure :: update_partmesh                        !< Update a partmesh object using current particles
       procedure :: collide                                !< Evaluate interparticle collision force
-      procedure :: advance                                !< Step forward the particle ODEs
+      procedure :: advance                                !< Step forward the particle ODEs using RK2
+      procedure :: advance_verlet                         !< Step forward the particle ODEs using Verlet
       procedure :: get_rhs                                !< Compute rhs of particle odes
       procedure :: resize                                 !< Resize particle array to given size
       procedure :: resize_ghost                           !< Resize ghost array to given size
@@ -353,23 +355,13 @@ contains
    
    !> Resolve collisional interaction between particles, walls, and an optional IB level set
    !> Requires tau_col, e_n, e_w and mu_f to be set beforehand
-   subroutine collide(this,dt,Gib,Nxib,Nyib,Nzib)
+   subroutine collide(this,dt,Gib)
       implicit none
       class(lpt), intent(inout) :: this
       real(WP), intent(inout) :: dt  !< Timestep size over which to advance
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: Gib  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: Nxib !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: Nyib !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: Nzib !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       integer, dimension(:,:,:), allocatable :: npic      !< Number of particle in cell
       integer, dimension(:,:,:,:), allocatable :: ipic    !< Index of particle in cell
-      
-      ! Check if all IB parameters are present
-      check_G: block
-         use messager, only: die
-         if (present(Gib).and.(.not.present(Nxib).or..not.present(Nyib).or..not.present(Nzib))) &
-         call die('[lpt collide] IB collisions need Gib, Nxib, Nyib, AND Nzib')
-      end block check_G
       
       ! Start by zeroing out the collision force
       zero_force: block
@@ -429,11 +421,9 @@ contains
          use mathtools, only: Pi,normalize,cross_product
          integer :: i1,i2,ii,jj,kk,nn,ierr
          real(WP) :: d1,m1,d2,m2,d12,m12,buf
-         real(WP), dimension(3) :: r1,v1,w1,r2,v2,w2,v12,n12,f_n,t12,f_t
-         real(WP) :: k_n,eta_n,k_coeff,eta_coeff,k_coeff_w,eta_coeff_w,rnv,r_influ,delta_n,rtv
-         real(WP), parameter :: aclipnorm=1.0e-6_WP
-         real(WP), parameter :: acliptan=1.0e-9_WP
-         real(WP), parameter :: rcliptan=0.05_WP
+         real(WP), dimension(3) :: r1,v1,w1,r2,v2,w2,n12
+         real(WP) :: k_coeff,eta_coeff,k_coeff_w,eta_coeff_w
+         logical :: hit
          
          ! Reset collision counter
          this%ncol=0
@@ -455,150 +445,56 @@ contains
             v1=this%p(i1)%vel
             w1=this%p(i1)%angVel
             d1=this%p(i1)%d
-            m1=this%rho*Pi/6.0_WP*d1**3
+            m1=this%rho*Pi/6.0_WP*d1**3            
 
+            ! Wall and IB collisions: r2=contact point, d2=0, v2=w2=0, and m2=huge so that m_eff=m1
+            v2=0.0_WP; w2=0.0_WP; d2=0.0_WP; m2=huge(m1)
             ! Collide with walls in x
             d12=abs(this%xwall(this%p(i1)%ind(1),this%p(i1)%ind(2),this%p(i1)%ind(3))-this%p(i1)%pos(1))
             n12=[sign(1.0_WP,this%xwall(this%p(i1)%ind(1),this%p(i1)%ind(2),this%p(i1)%ind(3))-this%p(i1)%pos(1)),0.0_WP,0.0_WP]
-            rnv=dot_product(v1,n12)
-            r_influ=min(2.0_WP*abs(rnv)*dt,0.2_WP*d1)
-            delta_n=min(0.5_WP*d1+r_influ-d12,this%clip_col*0.5_WP*d1)
-            ! Assess if there is collision
-            if (delta_n.gt.0.0_WP) then
-               ! Normal collision
-               k_n=m1*k_coeff_w
-               eta_n=m1*eta_coeff_w
-               f_n=-k_n*delta_n*n12-eta_n*rnv*n12
-               ! Tangential collision
-               f_t=0.0_WP
-               if (this%mu_f.gt.0.0_WP) then
-                  t12 = v1-rnv*n12+cross_product(0.5_WP*d1*w1,n12)
-                  rtv = sqrt(sum(t12*t12))
-                  if (rnv*dt/d1.gt.aclipnorm) then
-                     if (rtv/rnv.lt.rcliptan) rtv=0.0_WP
-                  else
-                     if (rtv*dt/d1.lt.acliptan) rtv=0.0_WP
-                  end if
-                  if (rtv.gt.0.0_WP) f_t=-this%mu_f*sqrt(sum(f_n*f_n))*t12/rtv
-               end if
-               ! Calculate collision force
-               f_n=f_n/m1; f_t=f_t/m1
-               this%p(i1)%Acol=this%p(i1)%Acol+f_n+f_t
-               ! Calculate collision torque
-               this%p(i1)%Tcol=this%p(i1)%Tcol+cross_product(0.5_WP*d1*n12,f_t)
-            end if
-
+            r2=d12*n12+r1
+            call col_force(this%p(i1),r1,v1,w1,d1,m1,r2,v2,w2,d2,m2,k_coeff_w,eta_coeff_w)
             ! Collide with walls in y
             d12=abs(this%ywall(this%p(i1)%ind(1),this%p(i1)%ind(2),this%p(i1)%ind(3))-this%p(i1)%pos(2))
             n12=[0.0_WP,sign(1.0_WP,this%ywall(this%p(i1)%ind(1),this%p(i1)%ind(2),this%p(i1)%ind(3))-this%p(i1)%pos(2)),0.0_WP]
-            rnv=dot_product(v1,n12)
-            r_influ=min(2.0_WP*abs(rnv)*dt,0.2_WP*d1)
-            delta_n=min(0.5_WP*d1+r_influ-d12,this%clip_col*0.5_WP*d1)
-            ! Assess if there is collision
-            if (delta_n.gt.0.0_WP) then
-               ! Normal collision
-               k_n=m1*k_coeff_w
-               eta_n=m1*eta_coeff_w
-               f_n=-k_n*delta_n*n12-eta_n*rnv*n12
-               ! Tangential collision
-               f_t=0.0_WP
-               if (this%mu_f.gt.0.0_WP) then
-                  t12 = v1-rnv*n12+cross_product(0.5_WP*d1*w1,n12)
-                  rtv = sqrt(sum(t12*t12))
-                  if (rnv*dt/d1.gt.aclipnorm) then
-                     if (rtv/rnv.lt.rcliptan) rtv=0.0_WP
-                  else
-                     if (rtv*dt/d1.lt.acliptan) rtv=0.0_WP
-                  end if
-                  if (rtv.gt.0.0_WP) f_t=-this%mu_f*sqrt(sum(f_n*f_n))*t12/rtv
-               end if
-               ! Calculate collision force
-               f_n=f_n/m1; f_t=f_t/m1
-               this%p(i1)%Acol=this%p(i1)%Acol+f_n+f_t
-               ! Calculate collision torque
-               this%p(i1)%Tcol=this%p(i1)%Tcol+cross_product(0.5_WP*d1*n12,f_t)
-            end if
-
+            r2=d12*n12+r1
+            call col_force(this%p(i1),r1,v1,w1,d1,m1,r2,v2,w2,d2,m2,k_coeff_w,eta_coeff_w)
             ! Collide with walls in z
             d12=abs(this%zwall(this%p(i1)%ind(1),this%p(i1)%ind(2),this%p(i1)%ind(3))-this%p(i1)%pos(3))
             n12=[0.0_WP,0.0_WP,sign(1.0_WP,this%zwall(this%p(i1)%ind(1),this%p(i1)%ind(2),this%p(i1)%ind(3))-this%p(i1)%pos(3))]
-            rnv=dot_product(v1,n12)
-            r_influ=min(2.0_WP*abs(rnv)*dt,0.2_WP*d1)
-            delta_n=min(0.5_WP*d1+r_influ-d12,this%clip_col*0.5_WP*d1)
-            ! Assess if there is collision
-            if (delta_n.gt.0.0_WP) then
-               ! Normal collision
-               k_n=m1*k_coeff_w
-               eta_n=m1*eta_coeff_w
-               f_n=-k_n*delta_n*n12-eta_n*rnv*n12
-               ! Tangential collision
-               f_t=0.0_WP
-               if (this%mu_f.gt.0.0_WP) then
-                  t12 = v1-rnv*n12+cross_product(0.5_WP*d1*w1,n12)
-                  rtv = sqrt(sum(t12*t12))
-                  if (rnv*dt/d1.gt.aclipnorm) then
-                     if (rtv/rnv.lt.rcliptan) rtv=0.0_WP
-                  else
-                     if (rtv*dt/d1.lt.acliptan) rtv=0.0_WP
-                  end if
-                  if (rtv.gt.0.0_WP) f_t=-this%mu_f*sqrt(sum(f_n*f_n))*t12/rtv
-               end if
-               ! Calculate collision force
-               f_n=f_n/m1; f_t=f_t/m1
-               this%p(i1)%Acol=this%p(i1)%Acol+f_n+f_t
-               ! Calculate collision torque
-               this%p(i1)%Tcol=this%p(i1)%Tcol+cross_product(0.5_WP*d1*n12,f_t)
-            end if
-            
+            r2=d12*n12+r1
+            call col_force(this%p(i1),r1,v1,w1,d1,m1,r2,v2,w2,d2,m2,k_coeff_w,eta_coeff_w)
             ! Collide with IB
             if (present(Gib)) then
-               d12=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Gib,bc='n')
-               n12(1)=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Nxib,bc='n')
-               n12(2)=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Nyib,bc='n')
-               n12(3)=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Nzib,bc='n')
-               buf = sqrt(sum(n12*n12))+epsilon(1.0_WP)
-               n12 = -n12/buf
-               rnv=dot_product(v1,n12)
-               r_influ=min(2.0_WP*abs(rnv)*dt,0.2_WP*d1)
-               delta_n=min(0.5_WP*d1+r_influ-d12,this%clip_col*0.5_WP*d1)
-               
-               ! Assess if there is collision
-               if (delta_n.gt.0.0_WP) then
-                  ! Normal collision
-                  k_n=m1*k_coeff_w
-                  eta_n=m1*eta_coeff_w
-                  f_n=-k_n*delta_n*n12-eta_n*rnv*n12
-                  ! Tangential collision
-                  f_t=0.0_WP
-                  if (this%mu_f.gt.0.0_WP) then
-                     t12 = v1-rnv*n12+cross_product(0.5_WP*d1*w1,n12)
-                     rtv = sqrt(sum(t12*t12))
-                     if (rnv*dt/d1.gt.aclipnorm) then
-                        if (rtv/rnv.lt.rcliptan) rtv=0.0_WP
-                     else
-                        if (rtv*dt/d1.lt.acliptan) rtv=0.0_WP
-                     end if
-                     if (rtv.gt.0.0_WP) f_t=-this%mu_f*sqrt(sum(f_n*f_n))*t12/rtv
-                  end if
-                  ! Calculate collision force
-                  f_n=f_n/m1; f_t=f_t/m1
-                  this%p(i1)%Acol=this%p(i1)%Acol+f_n+f_t
-                  ! Calculate collision torque
-                  this%p(i1)%Tcol=this%p(i1)%Tcol+cross_product(0.5_WP*d1*n12,f_t)
-               end if
+               ib_col: block
+                 real(WP) :: dx,dy,dz
+                 real(WP), dimension(3) :: pos_p,pos_m
+                 ! Signed distance and outward IB normal nabla G/|nabla G| (from IB into fluid)
+                 d12=this%cfg%get_scalar(pos=this%p(i1)%pos,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Gib,bc='n')
+                 dx=this%cfg%dx(this%p(i1)%ind(1)); dy=this%cfg%dy(this%p(i1)%ind(2)); dz=this%cfg%dz(this%p(i1)%ind(3))
+                 pos_p=[r1(1)+0.5_WP*dx,r1(2),r1(3)]; pos_m=[r1(1)-0.5_WP*dx,r1(2),r1(3)]
+                 n12(1)=(this%cfg%get_scalar(pos=pos_p,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Gib,bc='n')-&
+                      this%cfg%get_scalar(pos=pos_m,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Gib,bc='n'))/dx
+                 pos_p=[r1(1),r1(2)+0.5_WP*dy,r1(3)]; pos_m=[r1(1),r1(2)-0.5_WP*dy,r1(3)]
+                 n12(2)=(this%cfg%get_scalar(pos=pos_p,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Gib,bc='n')-&
+                      this%cfg%get_scalar(pos=pos_m,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Gib,bc='n'))/dy
+                 pos_p=[r1(1),r1(2),r1(3)+0.5_WP*dz]; pos_m=[r1(1),r1(2),r1(3)-0.5_WP*dz]
+                 n12(3)=(this%cfg%get_scalar(pos=pos_p,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Gib,bc='n')-&
+                      this%cfg%get_scalar(pos=pos_m,i0=this%p(i1)%ind(1),j0=this%p(i1)%ind(2),k0=this%p(i1)%ind(3),S=Gib,bc='n'))/dz
+                 buf=norm2(n12)+epsilon(1.0_WP); n12=n12/buf; r2=r1-d12*n12
+                 call col_force(this%p(i1),r1,v1,w1,d1,m1,r2,v2,w2,d2,m2,k_coeff_w,eta_coeff_w)
+               end block ib_col
             end if
             
-            ! Loop over nearest cells
+            ! Collide with nearest neighbors
+            hit=.false.
             do kk=this%p(i1)%ind(3)-1,this%p(i1)%ind(3)+1
                do jj=this%p(i1)%ind(2)-1,this%p(i1)%ind(2)+1
                   do ii=this%p(i1)%ind(1)-1,this%p(i1)%ind(1)+1
-                     
                      ! Loop over particles in that cell
                      do nn=1,npic(ii,jj,kk)
-                        
                         ! Get index of neighbor particle
                         i2=ipic(nn,ii,jj,kk)
-                        
                         ! Get relevant data from correct storage
                         if (i2.gt.0) then
                            r2=this%p(i2)%pos
@@ -614,46 +510,10 @@ contains
                            d2=this%g(i2)%d
                            m2=this%rho*Pi/6.0_WP*d2**3
                         end if
-                        
-                        ! Compute relative information
-                        d12=norm2(r1-r2)
-                        if (d12.lt.10.0_WP*epsilon(d12)) cycle !< this should skip auto-collision
-                        n12=(r2-r1)/d12
-                        v12=v1-v2
-                        rnv=dot_product(v12,n12)
-                        r_influ=min(abs(rnv)*dt,0.1_WP*(d1+d2))
-                        delta_n=min(0.5_WP*(d1+d2)+r_influ-d12,this%clip_col*0.5_WP*(d1+d2))
-                        
-                        ! Assess if there is collision
-                        if (delta_n.gt.0.0_WP) then
-                           ! Normal collision
-                           m12=m1*m2/(m1+m2)
-                           k_n=m12*k_coeff
-                           eta_n=m12*eta_coeff
-                           f_n=-k_n*delta_n*n12-eta_n*rnv*n12
-                           ! Tangential collision
-                           f_t=0.0_WP
-                           if (this%mu_f.gt.0.0_WP) then
-                              t12 = v12-rnv*n12+cross_product(0.5_WP*(d1*w1+d2*w2),n12)
-                              rtv = sqrt(sum(t12*t12))
-                              if (rnv*dt*2.0_WP/(d1+d2).gt.aclipnorm) then
-                                 if (rtv/rnv.lt.rcliptan) rtv=0.0_WP
-                              else
-                                 if (rtv*dt*2.0_WP/(d1+d2).lt.acliptan) rtv=0.0_WP
-                              end if
-                              if (rtv.gt.0.0_WP) f_t=-this%mu_f*sqrt(sum(f_n*f_n))*t12/rtv
-                           end if
-                           ! Calculate collision force
-                           f_n=f_n/m1; f_t=f_t/m1
-                           this%p(i1)%Acol=this%p(i1)%Acol+f_n+f_t
-                           ! Calculate collision torque
-                           this%p(i1)%Tcol=this%p(i1)%Tcol+cross_product(0.5_WP*d1*n12,f_t)
-                           ! Add up the collisions
-                           this%ncol=this%ncol+1
-                        end if
-                        
+                        ! Compute collision force
+                        call col_force(this%p(i1),r1,v1,w1,d1,m1,r2,v2,w2,d2,m2,k_coeff,eta_coeff,hit)
+                        if (hit) this%ncol=this%ncol+1
                      end do
-                     
                   end do
                end do
             end do
@@ -685,11 +545,66 @@ contains
       ! Clean up
       if (allocated(npic)) deallocate(npic)
       if (allocated(ipic)) deallocate(ipic)
-      
+
+    contains
+
+      !> Soft-sphere collision force between (r1,v1,w1,d1,m1) and virtual partner (r2,v2,w2,d2,m2).
+      !> n12=(r2-r1)/|r2-r1| computed internally => points from particle toward partner.
+      !> Wall/IB: set r2=contact point, d2=0, v2=w2=0, m2=huge => m_eff->m1, d_eff=0.5*d1.
+      subroutine col_force(p,r1,v1,w1,d1,m1,r2,v2,w2,d2,m2,kk,ee,collided)
+        use mathtools, only: cross_product
+        type(part), intent(inout) :: p
+        real(WP), dimension(3), intent(in) :: r1,v1,w1,r2,v2,w2
+        real(WP), intent(in)  :: d1,m1,d2,m2,kk,ee
+        logical,  intent(out), optional :: collided
+        real(WP) :: d12,d_eff,rnv,r_influ,delta_n,rtv,m_eff
+        real(WP), dimension(3) :: n12,v12,t12,f_n,f_t
+        real(WP), parameter :: aclipnorm=1.0e-6_WP,acliptan=1.0e-9_WP,rcliptan=0.05_WP
+        ! No collision yet
+        if (present(collided)) collided=.false.
+        ! Get distance
+        d12=norm2(r2-r1)
+        ! Skip if particles are too close - likely self-collision
+        if (d12.lt.10.0_WP*epsilon(d12)) return
+        ! Get normal
+        n12=(r2-r1)/d12
+        ! Get effective diameter, relative velocity, and relative normal velocity
+        d_eff=0.5_WP*(d1+d2); v12=v1-v2; rnv=dot_product(v12,n12)
+        ! Get influence radius
+        r_influ=min(abs(rnv)*dt,0.2_WP*d_eff)
+        ! Get overlap
+        delta_n=min(d_eff+r_influ-d12,this%clip_col*d_eff)
+        ! Done if no overlap
+        if (delta_n.le.0.0_WP) return
+        ! Collision detected
+        if (present(collided)) collided=.true.
+        ! Get effective mass
+        m_eff=m1*m2/(m1+m2)
+        ! Get tangential velocity
+        t12=v12-rnv*n12+cross_product(0.5_WP*(d1*w1+d2*w2),n12)
+        ! Get normal force
+        f_n=(-m_eff*kk*delta_n-m_eff*ee*rnv)*n12
+        ! Get tangential force
+        f_t=0.0_WP
+        if (this%mu_f.gt.0.0_WP) then
+           rtv=sqrt(sum(t12*t12))
+           if (rnv*dt/d_eff.gt.aclipnorm) then
+              if (   rtv/rnv  .lt.rcliptan) rtv=0.0_WP
+           else
+              if (dt*rtv/d_eff.lt.acliptan) rtv=0.0_WP
+           end if
+           if (rtv.gt.0.0_WP) f_t=-this%mu_f*norm2(f_n)*t12/rtv
+        end if
+        ! Increment accelerations on p(i1)
+        p%Acol=p%Acol+(f_n+f_t)/m1
+        p%Tcol=p%Tcol+cross_product(0.5_WP*d1*n12,f_t/m1)
+      end subroutine col_force
+
    end subroutine collide
-   
-   
-   !> Advance the particle equations by a specified time step dt
+
+
+   !> Advance the particle equations by a specified time step dt using RK2
+   !> Collisions should be computed before this is called
    !> p%id=0 => no coll, no solve
    !> p%id=-1=> no coll, no move
    subroutine advance(this,dt,U,V,W,rho,visc,stress_x,stress_y,stress_z,srcU,srcV,srcW)
@@ -712,7 +627,7 @@ contains
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcW   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       integer :: i,ierr
       real(WP) :: mydt,dt_done,Ip
-      real(WP), dimension(3) :: acc,dmom
+      real(WP), dimension(3) :: dmom
       real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_) :: sx,sy,sz
       type(part) :: myp,pold
       
@@ -758,19 +673,19 @@ contains
             ! Particle moment of inertia per unit mass
             Ip = 0.1_WP*myp%d**2
             ! Advance with Euler prediction
-            call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,stress_x=sx,stress_y=sy,stress_z=sz,p=myp,acc=acc,opt_dt=myp%dt)
+            call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,stress_x=sx,stress_y=sy,stress_z=sz,p=myp,opt_dt=myp%dt)
             myp%pos=pold%pos+0.5_WP*mydt*myp%vel
-            myp%vel=pold%vel+0.5_WP*mydt*(acc+this%gravity+myp%Acol)
+            myp%vel=pold%vel+0.5_WP*mydt*(myp%Afluid+myp%Acol+this%gravity)
             myp%angVel=pold%angVel+0.5_WP*mydt*myp%Tcol/Ip
             ! Correct with midpoint rule
-            call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,stress_x=sx,stress_y=sy,stress_z=sz,p=myp,acc=acc,opt_dt=myp%dt)
+            call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc,stress_x=sx,stress_y=sy,stress_z=sz,p=myp,opt_dt=myp%dt)
             myp%pos=pold%pos+mydt*myp%vel
-            myp%vel=pold%vel+mydt*(acc+this%gravity+myp%Acol)
+            myp%vel=pold%vel+mydt*(myp%Afluid+myp%Acol+this%gravity)
             myp%angVel=pold%angVel+mydt*myp%Tcol/Ip
             ! Relocalize
             myp%ind=this%cfg%get_ijk_global(myp%pos,myp%ind)
             ! Send source term back to the mesh
-            dmom=mydt*acc*this%rho*Pi/6.0_WP*myp%d**3
+            dmom=mydt*myp%Afluid*this%rho*Pi/6.0_WP*myp%d**3
             if (this%cfg%nx.gt.1.and.present(srcU)) call this%cfg%set_scalar(Sp=-dmom(1),pos=myp%pos,i0=myp%ind(1),j0=myp%ind(2),k0=myp%ind(3),S=srcU,bc='n')
             if (this%cfg%ny.gt.1.and.present(srcV)) call this%cfg%set_scalar(Sp=-dmom(2),pos=myp%pos,i0=myp%ind(1),j0=myp%ind(2),k0=myp%ind(3),S=srcV,bc='n')
             if (this%cfg%nz.gt.1.and.present(srcW)) call this%cfg%set_scalar(Sp=-dmom(3),pos=myp%pos,i0=myp%ind(1),j0=myp%ind(2),k0=myp%ind(3),S=srcW,bc='n')
@@ -832,10 +747,166 @@ contains
       end block logging
       
    end subroutine advance
+    
+   
+   !> Advance the particle equations by a specified time step dt using Verlet scheme
+   !> p%id=0 => no coll, no solve
+   !> p%id=-1=> no coll, no move
+   subroutine advance_verlet(this,dt,U,V,W,rho,visc,stress_x,stress_y,stress_z,srcU,srcV,srcW,Gib,collide)
+      use mpi_f08,   only: MPI_ALLREDUCE,MPI_SUM,MPI_INTEGER,MPI_IN_PLACE
+      use parallel,  only: MPI_REAL_WP
+      use mathtools, only: Pi
+      implicit none
+      class(lpt), intent(inout) :: this
+      real(WP), intent(inout) :: dt  !< Timestep size over which to advance
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: U         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: V         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: W         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: rho       !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: visc      !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: stress_x  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: stress_y  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: stress_z  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcU   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcV   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: srcW   !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout), optional :: Gib    !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
+      logical, intent(in), optional :: collide
+      integer :: i,ierr
+      logical :: collide_
+      real(WP) :: dt_done,Ip
+      real(WP), dimension(3) :: dmom
+      real(WP), dimension(this%cfg%imino_:this%cfg%imaxo_,this%cfg%jmino_:this%cfg%jmaxo_,this%cfg%kmino_:this%cfg%kmaxo_) :: sx,sy,sz
+      
+      ! Zero out source term arrays
+      if (present(srcU)) srcU=0.0_WP
+      if (present(srcV)) srcV=0.0_WP
+      if (present(srcW)) srcW=0.0_WP
+      
+      ! Get fluid stress
+      if (present(stress_x)) then
+         sx=stress_x
+      else
+         sx=0.0_WP
+      end if
+      if (present(stress_y)) then
+         sy=stress_y
+      else
+         sy=0.0_WP
+      end if
+      if (present(stress_z)) then
+         sz=stress_z
+      else
+         sz=0.0_WP
+      end if
+      
+      ! Zero out number of particles removed
+      this%np_out=0
+      this%vp_out=0.0_WP
+
+      ! Check if we should collide
+      if (present(collide)) then
+         collide_=collide
+      else
+         collide_=.true.
+      end if
+
+      ! Advance velocity based on old force and position based on mid-velocity
+      do i=1,this%np_
+         if (this%p(i)%id.eq.0) cycle
+         ! Moment of inertia per unit mass
+         Ip=0.1_WP*this%p(i)%d**2
+         ! Half-step velocity
+         this%p(i)%vel   =this%p(i)%vel   +0.5_WP*dt*(this%p(i)%Afluid+this%p(i)%Acol+this%gravity)
+         this%p(i)%angVel=this%p(i)%angVel+0.5_WP*dt*(this%p(i)%Tcol/Ip)
+         ! Full-step position update
+         if (this%p(i)%id.ne.-1) then
+            this%p(i)%pos=this%p(i)%pos+dt*this%p(i)%vel
+            ! Correct the position to take into account periodicity
+            if (this%cfg%xper) this%p(i)%pos(1)=this%cfg%x(this%cfg%imin)+modulo(this%p(i)%pos(1)-this%cfg%x(this%cfg%imin),this%cfg%xL)
+            if (this%cfg%yper) this%p(i)%pos(2)=this%cfg%y(this%cfg%jmin)+modulo(this%p(i)%pos(2)-this%cfg%y(this%cfg%jmin),this%cfg%yL)
+            if (this%cfg%zper) this%p(i)%pos(3)=this%cfg%z(this%cfg%kmin)+modulo(this%p(i)%pos(3)-this%cfg%z(this%cfg%kmin),this%cfg%zL)
+            ! Handle particles that have left the domain
+            if (this%p(i)%pos(1).lt.this%cfg%x(this%cfg%imin).or.this%p(i)%pos(1).gt.this%cfg%x(this%cfg%imax+1)) this%p(i)%flag=1
+            if (this%p(i)%pos(2).lt.this%cfg%y(this%cfg%jmin).or.this%p(i)%pos(2).gt.this%cfg%y(this%cfg%jmax+1)) this%p(i)%flag=1
+            if (this%p(i)%pos(3).lt.this%cfg%z(this%cfg%kmin).or.this%p(i)%pos(3).gt.this%cfg%z(this%cfg%kmax+1)) this%p(i)%flag=1
+            ! Relocalize the particle
+            this%p(i)%ind=this%cfg%get_ijk_global(this%p(i)%pos,this%p(i)%ind)
+            ! Count removed particles
+            if (this%p(i)%flag.eq.1) then
+               this%np_out=this%np_out+1
+               this%vp_out=this%vp_out+Pi/6.0_WP*this%p(i)%d**3
+            end if
+         end if
+      end do
+
+      ! Communicate particles
+      call this%sync()
+
+      ! Sum up particles removed
+      call MPI_ALLREDUCE(MPI_IN_PLACE,this%np_out,1,MPI_INTEGER,MPI_SUM,this%cfg%comm,ierr)
+      call MPI_ALLREDUCE(MPI_IN_PLACE,this%vp_out,1,MPI_REAL_WP,MPI_SUM,this%cfg%comm,ierr)
+
+      ! Update collisions
+      if (collide_) then
+         if (present(Gib)) then
+            call this%collide(dt=dt,Gib=Gib)
+         else
+            call this%collide(dt=dt)
+         end if
+      end if
+      
+      ! Advance velocity only based on new force
+      do i=1,this%np_
+         if (this%p(i)%id.eq.0) cycle
+         ! Update fluid acceleration
+         call this%get_rhs(U=U,V=V,W=W,rho=rho,visc=visc, &
+              stress_x=sx,stress_y=sy,stress_z=sz,p=this%p(i))
+         ! Moment of inertia per unit mass
+         Ip=0.1_WP*this%p(i)%d**2
+         ! Advance with Verlet scheme
+         this%p(i)%vel   =this%p(i)%vel   +0.5_WP*dt*(this%p(i)%Afluid+this%p(i)%Acol+this%gravity)
+         this%p(i)%angVel=this%p(i)%angVel+0.5_WP*dt*(this%p(i)%Tcol/Ip)
+         ! Send source term back to the mesh
+         dmom=dt*this%p(i)%Afluid*this%rho*Pi/6.0_WP*this%p(i)%d**3
+         if (this%cfg%nx.gt.1.and.present(srcU)) call this%cfg%set_scalar(Sp=-dmom(1),pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=srcU,bc='n')
+         if (this%cfg%ny.gt.1.and.present(srcV)) call this%cfg%set_scalar(Sp=-dmom(2),pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=srcV,bc='n')
+         if (this%cfg%nz.gt.1.and.present(srcW)) call this%cfg%set_scalar(Sp=-dmom(3),pos=this%p(i)%pos,i0=this%p(i)%ind(1),j0=this%p(i)%ind(2),k0=this%p(i)%ind(3),S=srcW,bc='n')
+      end do
+
+      ! Divide source arrays by volume, sum at boundaries, and volume filter if present
+      if (present(srcU)) then
+         srcU=srcU/this%cfg%vol; call this%cfg%syncsum(srcU); call this%filter(srcU)
+      end if
+      if (present(srcV)) then
+         srcV=srcV/this%cfg%vol; call this%cfg%syncsum(srcV); call this%filter(srcV)
+      end if
+      if (present(srcW)) then
+         srcW=srcW/this%cfg%vol; call this%cfg%syncsum(srcW); call this%filter(srcW)
+      end if
+      
+      ! Recompute volume fraction
+      call this%update_VF()
+      
+      ! Log/screen output
+      logging: block
+         use, intrinsic :: iso_fortran_env, only: output_unit
+         use param,    only: verbose
+         use messager, only: log
+         use string,   only: str_long
+         character(len=str_long) :: message
+         if (this%cfg%amRoot) then
+            write(message,'("Particle solver [",a,"] on partitioned grid [",a,"]: ",i0," particles were advanced")') trim(this%name),trim(this%cfg%name),this%np
+            if (verbose.gt.1) write(output_unit,'(a)') trim(message)
+            if (verbose.gt.0) call log(message)
+         end if
+      end block logging
+      
+    end subroutine advance_verlet
    
    
    !> Calculate RHS of the particle ODEs
-   subroutine get_rhs(this,U,V,W,rho,visc,stress_x,stress_y,stress_z,p,acc,opt_dt)
+   subroutine get_rhs(this,U,V,W,rho,visc,stress_x,stress_y,stress_z,p,opt_dt)
       implicit none
       class(lpt), intent(inout) :: this
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: U         !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
@@ -846,9 +917,8 @@ contains
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_x  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_y  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
       real(WP), dimension(this%cfg%imino_:,this%cfg%jmino_:,this%cfg%kmino_:), intent(inout) :: stress_z  !< Needs to be (imino_:imaxo_,jmino_:jmaxo_,kmino_:kmaxo_)
-      type(part), intent(in) :: p
-      real(WP), dimension(3), intent(out) :: acc
-      real(WP), intent(out) :: opt_dt
+      type(part), intent(inout) :: p
+      real(WP), intent(out), optional :: opt_dt
       real(WP) :: fvisc,frho,pVF,fVF
       real(WP), dimension(3) :: fvel,fstress
       
@@ -897,9 +967,9 @@ contains
         end select
         ! Particle response time
         tau=this%rho*p%d**2/(18.0_WP*fvisc*corr)
-        ! Return acceleration and optimal timestep size
-        acc=(fvel-p%vel)/tau+fstress/this%rho
-        opt_dt=tau/real(this%nstep,WP)
+        ! Return fluid acceleration
+        p%Afluid=(fvel-p%vel)/tau+fstress/this%rho
+        if (present(opt_dt)) opt_dt=tau/real(this%nstep,WP)
       end block compute_drag
       
    end subroutine get_rhs
@@ -1414,6 +1484,7 @@ contains
                ! Set various parameters for the particle
                this%p(count)%id    =maxid+int(np_tmp,8)
                this%p(count)%dt    =0.0_WP
+               this%p(count)%Afluid=0.0_WP
                this%p(count)%Acol  =0.0_WP
                this%p(count)%Tcol  =0.0_WP
                this%p(count)%angVel=0.0_WP
