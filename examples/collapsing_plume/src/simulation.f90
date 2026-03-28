@@ -641,8 +641,6 @@ contains
          lpt: block
            real(WP) :: dt_done,mydt,cfl
            integer :: i
-           ! Inject particles
-           call lp%inject(dt=time%dt,face='y',avoid_overlap=.true.)
            ! Get fluid stress
            call fs%get_div_stress(resU,resV,resW)
            ! Zero-out LPT source terms
@@ -654,6 +652,8 @@ contains
            do while (dt_done.lt.time%dtmid)
               ! Decide the timestep size
               mydt=min(lp_dt,time%dtmid-dt_done)
+              ! Inject particles
+              call lp%inject(dt=mydt,face='y',avoid_overlap=.true.)
               ! Collide and advance particles
               call lp%advance_verlet(dt=mydt,U=fs%U,V=fs%V,W=fs%W,rho=rho0,visc=fs%visc,stress_x=resU,stress_y=resV,stress_z=resW,&
                    srcU=tmp1,srcV=tmp2,srcW=tmp3,Gib=cfg%Gib,collide=.true.)
