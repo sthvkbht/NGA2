@@ -140,6 +140,9 @@ module simulation
      implicit none
      integer :: i,j,k,ii,jj,kk
      real(WP) :: sum_VF,sum_VFQ1,sum_VFQ2
+     real(WP), dimension(:,:,:), allocatable :: Q1old,Q2old
+     allocate(Q1old(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_)); Q1old=fs%Q(:,:,:,1)
+     allocate(Q2old(fs%cfg%imino_:fs%cfg%imaxo_,fs%cfg%jmino_:fs%cfg%jmaxo_,fs%cfg%kmino_:fs%cfg%kmaxo_)); Q2old=fs%Q(:,:,:,2)
      do k=cfg%kmin_,cfg%kmax_
         do j=cfg%jmin_,cfg%jmax_
            do i=cfg%imin_,cfg%imax_
@@ -149,8 +152,8 @@ module simulation
               do kk=-1,1; do jj=-1,1; do ii=-1,1
                  if (ii.eq.0.and.jj.eq.0.and.kk.eq.0) cycle
                  sum_VF  =sum_VF  +(1.0_WP-ls%VF(i+ii,j+jj,k+kk))
-                 sum_VFQ1=sum_VFQ1+(1.0_WP-ls%VF(i+ii,j+jj,k+kk))*fs%Q(i+ii,j+jj,k+kk,1)
-                 sum_VFQ2=sum_VFQ2+(1.0_WP-ls%VF(i+ii,j+jj,k+kk))*fs%Q(i+ii,j+jj,k+kk,2)
+                 sum_VFQ1=sum_VFQ1+cfg%VF(i+ii,j+jj,k+kk)*Q1old(i+ii,j+jj,k+kk)
+                 sum_VFQ2=sum_VFQ2+cfg%VF(i+ii,j+jj,k+kk)*Q2old(i+ii,j+jj,k+kk)
               end do; end do; end do
               if (sum_VF.gt.0.0_WP) then
                  fs%Q(i,j,k,1)=(1.0_WP-ls%VF(i,j,k))*fs%Q(i,j,k,1)+ls%VF(i,j,k)*sum_VFQ1/sum_VF
